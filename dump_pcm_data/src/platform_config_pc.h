@@ -1,0 +1,16 @@
+#ifndef DUMP_PCM_PLATFORM_CONFIG_PC_H
+#define DUMP_PCM_PLATFORM_CONFIG_PC_H
+
+#define MAX_SESSIONS 4
+#define MAX_OPEN_FILES 2
+#define IDLE_TIMEOUT_SEC 1
+#define MAX_QUEUE_BLOCKS 8
+#define MAX_QUEUE_BYTES (64 * 1024UL)
+
+#define DUMP_ROOT_DIR "/tmp/audio_dump_test/"
+#define DUMP_ROOT_DIR_PC DUMP_ROOT_DIR
+
+#define PROPERTY_NAME "AUDIO_DUMP_ENABLED"
+#define LOG_TAG "AudioHALPcmDump"
+
+#endif
