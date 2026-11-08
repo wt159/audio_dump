@@ -12,6 +12,14 @@
 - 每次改动代码后，必须按顺序执行：编译 → 测试 → 覆盖率。
 - 对这个仓库，PC 端验证顺序就是 `make` → `make run` → `make coverage`。
 
+## Environment and CI constraints
+- This workstation has no C toolchain: `gcc`, `make`, `cc` and `gcov` are absent, and `wsl.exe` is blocked by the sandbox policy. Never report a code change as locally verified; run the three steps on the CI `pc-verify` job or on a Linux host.
+- The `mingw-compile` job cross-compiles the module and is expected to fail until issue #1 B1/B2 are fixed. Fix the code instead of widening `continue-on-error`.
+- When `github.com:443` is unreachable (`CONNECT tunnel failed, response 502`, `Empty reply from server`, or a timeout) but `api.github.com` still answers, push by replaying commits through the Git Data API: `POST /git/trees` with `base_tree`, `POST /git/commits`, then `POST` or `PATCH /git/refs`, and open the PR with `gh pr create`.
+- Replayed commits get new SHAs, so local and remote branches diverge even when the content matches. Reconcile with `git fetch && git reset --hard origin/main` once the network recovers; never push a diverged branch.
+- When sending file content through the API, read it as bytes (`git show <sha>:<path>`), never through a trimming helper: stripping the trailing newline silently rewrites the file.
+- Cross-platform onboarding for issue #1 is tracked in `docs/issue-1-cross-platform-plan.md`; keep its status table in sync with reality.
+
 ## Build and test
 - PC build: `cd dump_pcm_data && make`
 - PC smoke run: `cd dump_pcm_data && make run`
