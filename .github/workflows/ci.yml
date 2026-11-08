@@ -1,0 +1,67 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pc-verify:
+    name: PC build, test and coverage
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Show toolchain
+        run: |
+          gcc --version | head -1
+          make --version | head -1
+          gcov --version | head -1
+
+      - name: make
+        working-directory: dump_pcm_data
+        run: make
+
+      # Runs the four contract scripts plus the full test binary.
+      - name: make run
+        working-directory: dump_pcm_data
+        run: make run
+
+      - name: make coverage
+        working-directory: dump_pcm_data
+        run: make coverage
+
+  mingw-compile:
+    name: MinGW cross compile check
+    runs-on: ubuntu-latest
+    # Expected to fail until issue #1 B1/B2 are fixed (sys/statvfs.h, mkdir signature).
+    # Drop continue-on-error when the MinGW target lands in PR3.
+    continue-on-error: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install MinGW toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y mingw-w64
+          x86_64-w64-mingw32-gcc --version | head -1
+
+      # Compile only: no --wrap/coverage flags, no test harness, no link step.
+      - name: Compile module sources for Windows
+        working-directory: dump_pcm_data
+        run: |
+          mkdir -p build/mingw
+          for f in src/logger.c src/queue.c src/session.c src/file_mgr.c \
+                   src/dump_control.c src/dump_writer.c src/dump_pcm_data.c; do
+            echo "--- $f"
+            x86_64-w64-mingw32-gcc -std=c11 -Wall -Wextra -Iinclude -Isrc \
+              -DDUMP_PCM_PC -D_POSIX_C_SOURCE=200809L \
+              -c "$f" -o "build/mingw/$(basename "$f" .c).o"
+          done
