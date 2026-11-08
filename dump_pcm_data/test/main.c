@@ -194,6 +194,9 @@ static atomic_int g_writer_hold_active = 0;
 static atomic_int g_writer_hold_ready = 0;
 static atomic_int g_writer_hold_release = 0;
 static atomic_int g_cond_timedwait_calls = 0;
+static atomic_int g_count_dir_ops = 0;
+static atomic_int g_dir_ops_on_caller = 0;
+static pthread_t g_caller_thread;
 
 static void *writer_hold_bridge_thread(void *arg) {
     writer_bridge_ctx_t *ctx = (writer_bridge_ctx_t *)arg;
@@ -312,6 +315,15 @@ int __wrap_pthread_cond_timedwait(pthread_cond_t *cond, pthread_mutex_t *mutex,
     }
 
     return rc;
+}
+
+DIR *__real_opendir(const char *name);
+
+DIR *__wrap_opendir(const char *name) {
+    if (atomic_load(&g_count_dir_ops) != 0 && pthread_equal(pthread_self(), g_caller_thread)) {
+        atomic_store(&g_dir_ops_on_caller, 1);
+    }
+    return __real_opendir(name);
 }
 
 int __wrap_queue_pop(queue_t *q, data_block_t *block) {
@@ -2201,6 +2213,34 @@ static int run_isolated_setclock_fallback_test(void) {
     return 0;
 }
 
+static int run_isolated_cleanup_deferred_test(void) {
+    dump_status_t status = {0};
+
+    reset_test_dir();
+    g_caller_thread = pthread_self();
+    atomic_store(&g_dir_ops_on_caller, 0);
+    atomic_store(&g_count_dir_ops, 1);
+    dump_pcm_data_write("x", 1, "deferred", "cleanup");
+    atomic_store(&g_count_dir_ops, 0);
+
+    /* The writer thread also scans the directory, so only count opendir calls
+     * made from the thread that entered dump_pcm_data_write(). */
+    if (atomic_load(&g_dir_ops_on_caller) != 0) {
+        return 1;
+    }
+
+    stop_and_wait("deferred", "cleanup");
+
+    if (count_pcm_files() != 1) {
+        return 1;
+    }
+    if (dump_pcm_data_get_status(&status) != 0) {
+        return 1;
+    }
+
+    return 0;
+}
+
 static int run_isolated_disabled_write_test(void) {
     dump_status_t status = {0};
     char dir[256] = {0};
@@ -2396,6 +2436,27 @@ static void test_disabled_write_has_no_side_effects(void) {
     pass(name);
 }
 
+static void test_cleanup_deferred_to_writer_thread(void) {
+    const char *name = "cleanup deferred to writer thread";
+    pid_t pid = fork();
+    int status = 0;
+
+    if (pid == 0) {
+        setenv("AUDIO_DUMP_ENABLED", "1", 1);
+        setenv("AUDIO_DUMP_RUN_CLEANUP_DEFERRED_TEST", "1", 1);
+        execl("./dump_pcm_test", "./dump_pcm_test", NULL);
+        _exit(2);
+    }
+
+    waitpid(pid, &status, 0);
+    if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
+        fail(name, "caller thread performed a directory scan");
+        return;
+    }
+
+    pass(name);
+}
+
 static void test_init_wait_path(void) {
     const char *name = "init wait path";
     pid_t pid = fork();
@@ -2471,6 +2532,10 @@ int main(void) {
 
     if (getenv("AUDIO_DUMP_RUN_DISABLED_WRITE_TEST") != NULL) {
         return run_isolated_disabled_write_test();
+    }
+
+    if (getenv("AUDIO_DUMP_RUN_CLEANUP_DEFERRED_TEST") != NULL) {
+        return run_isolated_cleanup_deferred_test();
     }
 
     if (getenv("AUDIO_DUMP_RUN_PUBLIC_WRITE_ALLOC_TEST") != NULL) {
@@ -2561,6 +2626,7 @@ int main(void) {
     test_init_do_init_failures();
     test_init_setclock_fallback();
     test_disabled_write_has_no_side_effects();
+    test_cleanup_deferred_to_writer_thread();
     test_init_wait_path();
     test_whitebox_coverage_shim();
 

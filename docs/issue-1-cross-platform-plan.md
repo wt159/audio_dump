@@ -94,16 +94,22 @@ check_enabled()  →  参数校验  →  ensure_initialized()  →  check_storag
 `file_mgr_cleanup(100, 7)`（opendir + 全量 stat + O(n²) 排序 + remove），
 与 `docs/spec.md` §3「不能在 HAL 读写线程中执行磁盘 I/O」冲突。
 
-**决策**：新增 `file_mgr_prepare()`，由写线程启动后、进入消费循环前执行，内容为
-"创建根目录 + 执行保留策略清理"。`do_init_once()` 不再做这两件事，只负责
-互斥量/条件变量/队列/会话管理/线程创建。
+**决策（实施时收窄）**：只把保留策略清理下沉。`do_init_once()` 不再执行
+`file_mgr_cleanup(100, 7)`，改由 `writer_thread_func()` 在进入消费循环前执行一次，
+失败时打 WARN 并继续（清理失败不影响落盘能力）。
 
-**失败语义**：`file_mgr_prepare()` 失败时打 ERROR，写线程进入"落盘不可用"状态：
-**继续消费并丢弃队列数据**（避免队列涨满后反而影响内存占用），不落盘、不重试目录扫描，
-调用方无任何感知。后续是否周期性重试由 §9 待确认项决定。
+原计划把根目录创建一并下沉，实施时否决：`check_storage()` 在入队前对根目录做 `statvfs`，
+目录不存在会直接失败，导致**所有写入被丢弃且永不自愈**；而 `ensure_dir_exists` 在目录
+已存在时只是一次 stat，代价可忽略。真正重的是 opendir + 全量 stat + O(n²) 排序 + unlink。
 
-**不在本期**：`check_storage()` 的 `statvfs` 完全下沉。它目前带 1 秒缓存，下沉需要
-跨线程请求-应答或周期任务，改动面大，列为 §9 待确认项。
+**失败语义**：清理失败只记 WARN，不改变落盘能力。目录创建失败仍按原路径让 init 失败
+（`get_status()` 返回 -1），与 C3 的"未启用/未初始化不可区分"保持一致。
+
+**验证方式**：`--wrap=opendir` 计数，且只在进入 `dump_pcm_data_write()` 的线程上计数，
+断言调用线程在 write 期间 opendir 次数为 0（T-03）。
+
+**不在本期**：`check_storage()` 的 `statvfs` 与 `ensure_dir_exists` 完全下沉。前者带
+1 秒缓存，下沉需要跨线程请求-应答或周期任务，改动面大，列为 §9 待确认项。
 
 ### D-04 运行时开关采用 push 式（D2）
 
@@ -193,7 +199,7 @@ typedef int (*dump_storage_query_fn_t)(const char *path, uint64_t *available_byt
 | 修改 | `dump_pcm_data_get_status()` | 语义补充：未启用统一返回 -1，行为本身不变 |
 | 移动 | `dump_pcm_set_statvfs_fn_for_test` 等注入点 | 迁至 `src/dump_test_hooks.h` |
 | 更名 | → `dump_pcm_set_storage_query_fn_for_test` | D-06，签名改为字节数出参 |
-| 内部新增 | `file_mgr_prepare()` | D-03，写线程执行建目录与清理 |
+| 内部变更 | `writer_thread_func()` 启动时执行 `file_mgr_cleanup(100, 7)` | D-03，替代 init 中的清理调用 |
 | 内部新增 | `dump_context_t.cond_clock_id` | D-01 |
 | 内部新增 | `DUMP_MKDIR` / `DUMP_PCM_DESKTOP_OBSERVE` | D-07 / D-08 |
 
@@ -270,7 +276,7 @@ G-01 属于既有缺陷，与本方案无关，但不修它后续所有 PR 都�
 | 批次 | 内容 | 任务 | 状态 |
 |---|---|---|---|
 | PR0 | 基线修复 G-01 | 修正 `check_docs_build_contract.sh` 文档路径 | ✅ 已合并；CI `pc-verify` 三件套通过 |
-| PR1 | D-01 时钟统一 + D-02 开关门控 + D-03 I/O 下沉 + C3 语义 | 实现 + T-01/T-02/T-03 + 既有 failpoint 用例拆分 | 🔧 D-01 ✅、D-02/C3 已实现待 CI；D-03 待做 |
+| PR1 | D-01 时钟统一 + D-02 开关门控 + D-03 I/O 下沉 + C3 语义 | 实现 + T-01/T-02/T-03 + 既有 failpoint 用例拆分 | 🔧 D-01/D-02/C3 ✅；D-03 已实现待 CI |
 | PR2 | D-06 拆头与存储抽象 + D-07 mkdir 宏 | 实现 + 测试桩迁移 + C2 匹配收紧 + T-06 | ⏳ |
 | PR3 | D-04 开关 + D-05 根目录 + D-09 CMake/MinGW + D-08 观测宏 | 实现 + T-04/T-05/T-07/T-08 + AGENTS.md | ⏳ |
 | 另立项 | D4 元数据 sidecar | 先定义元数据输入契约 | ⏳ |
