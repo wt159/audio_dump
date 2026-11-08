@@ -32,6 +32,9 @@ typedef struct {
     uint64_t written_bytes;
 } dump_session_info_t;
 
+/* Query APIs return -1 when the module has never been enabled. The master
+ * switch gates initialization, so "disabled" and "not initialized" are
+ * intentionally indistinguishable to callers. */
 #ifdef DUMP_PCM_INTERNAL_DEBUG_API
 int dump_pcm_data_get_status(dump_status_t *status);
 int dump_pcm_data_get_active_sessions(dump_session_info_t *sessions, int max_count, int *actual_count);

@@ -26,6 +26,8 @@
 
 ## High-signal implementation facts
 - Public APIs are `dump_pcm_data_write()` and `dump_pcm_data_stop()`, both take string `key1/key2`; Android HAL calls them from `out_write()/in_read()` and `out_standby()/in_standby()`.
+- The master switch is checked before initialization: a disabled `dump_pcm_data_write()` does not create the writer thread, does not create directories, and does not run the retention cleanup.
+- Query APIs return -1 when the module has never been enabled, so "disabled" and "not initialized" are deliberately indistinguishable.
 - `src/dump_pcm_data.c` is the runtime core: lazy singleton init, one writer thread, shared queue, session tracking, and file management.
 - Current file names include escaped keys, stable hash, generation, split index, and timestamp in code.
 - Low-storage handling latches until dump is toggled off and back on; do not assume space recovery alone clears it.
