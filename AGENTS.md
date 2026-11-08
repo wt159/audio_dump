@@ -20,6 +20,10 @@
 - When sending file content through the API, read it as bytes (`git show <sha>:<path>`), never through a trimming helper: stripping the trailing newline silently rewrites the file.
 - Cross-platform onboarding for issue #1 is tracked in `docs/issue-1-cross-platform-plan.md`; keep its status table in sync with reality.
 
+## Workflow
+- Every change, documentation included, lands through a pull request. Do not commit to `main` directly.
+- Keep PRs single-purpose: one behaviour change per PR, with the tests that cover it in the same commit series.
+
 ## Build and test
 - PC build: `cd dump_pcm_data && make`
 - PC smoke run: `cd dump_pcm_data && make run`
