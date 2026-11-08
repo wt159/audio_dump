@@ -193,6 +193,7 @@ static atomic_int g_queue_pop_fail_seen = 0;
 static atomic_int g_writer_hold_active = 0;
 static atomic_int g_writer_hold_ready = 0;
 static atomic_int g_writer_hold_release = 0;
+static atomic_int g_cond_timedwait_calls = 0;
 
 static void *writer_hold_bridge_thread(void *arg) {
     writer_bridge_ctx_t *ctx = (writer_bridge_ctx_t *)arg;
@@ -296,7 +297,10 @@ int __wrap_pthread_cond_init(pthread_cond_t *cond, const pthread_condattr_t *att
 
 int __wrap_pthread_cond_timedwait(pthread_cond_t *cond, pthread_mutex_t *mutex,
                                   const struct timespec *abstime) {
-    int rc = __real_pthread_cond_timedwait(cond, mutex, abstime);
+    int rc = 0;
+
+    atomic_fetch_add(&g_cond_timedwait_calls, 1);
+    rc = __real_pthread_cond_timedwait(cond, mutex, abstime);
 
     if (atomic_load(&g_writer_hold_active) != 0 && atomic_load(&g_writer_hold_ready) == 0) {
         atomic_store(&g_writer_hold_ready, 1);
@@ -2158,6 +2162,45 @@ static int run_isolated_init_failure_test(void) {
     return 0;
 }
 
+static int run_isolated_setclock_fallback_test(void) {
+    dump_status_t status = {0};
+    char paths[4][512];
+    char content[8] = {0};
+    int before = 0;
+    int after = 0;
+    int count = 0;
+
+    reset_test_dir();
+    set_fail_kind(FAIL_KIND_PTHREAD_CONDATTR_SETCLOCK, 0);
+    dump_pcm_data_write("x", 1, "fallback", "clock");
+    clear_fail_kind();
+
+    if (dump_pcm_data_get_status(&status) != 0 || !status.enabled) {
+        return 1;
+    }
+
+    stop_and_wait("fallback", "clock");
+
+    count = find_pcm_files(paths, 4);
+    if (count != 1) {
+        return 1;
+    }
+    if (read_file(paths[0], content, sizeof(content)) != 1 || content[0] != 'x') {
+        return 1;
+    }
+
+    /* A mismatched cond clock turns the idle wait into a busy loop; bound the
+     * number of timed waits observed over a 200ms idle window. */
+    before = atomic_load(&g_cond_timedwait_calls);
+    usleep(200000);
+    after = atomic_load(&g_cond_timedwait_calls);
+    if (after - before > 50) {
+        return 1;
+    }
+
+    return 0;
+}
+
 static int run_isolated_init_failpoint_test(void) {
     const char *failpoint = getenv("AUDIO_DUMP_INIT_FAILPOINT");
     dump_status_t status = {0};
@@ -2264,7 +2307,8 @@ static void test_init_failure_path(void) {
 
 static void test_init_do_init_failures(void) {
     const char *name = "init do_init failures";
-    const char *modes[] = {"mutex", "condattr", "clock", "cond"};
+    /* "clock" is no longer fatal at init: the module falls back to CLOCK_REALTIME. */
+    const char *modes[] = {"mutex", "condattr", "cond"};
 
     for (size_t i = 0; i < sizeof(modes) / sizeof(modes[0]); ++i) {
         pid_t pid = fork();
@@ -2283,6 +2327,27 @@ static void test_init_do_init_failures(void) {
             fail(name, modes[i]);
             return;
         }
+    }
+
+    pass(name);
+}
+
+static void test_init_setclock_fallback(void) {
+    const char *name = "init setclock fallback";
+    pid_t pid = fork();
+    int status = 0;
+
+    if (pid == 0) {
+        setenv("AUDIO_DUMP_ENABLED", "1", 1);
+        setenv("AUDIO_DUMP_RUN_SETCLOCK_FALLBACK_TEST", "1", 1);
+        execl("./dump_pcm_test", "./dump_pcm_test", NULL);
+        _exit(2);
+    }
+
+    waitpid(pid, &status, 0);
+    if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
+        fail(name, "isolated setclock fallback path failed");
+        return;
     }
 
     pass(name);
@@ -2355,6 +2420,10 @@ int main(void) {
 
     if (getenv("AUDIO_DUMP_RUN_INIT_FAILPOINT_TEST") != NULL) {
         return run_isolated_init_failpoint_test();
+    }
+
+    if (getenv("AUDIO_DUMP_RUN_SETCLOCK_FALLBACK_TEST") != NULL) {
+        return run_isolated_setclock_fallback_test();
     }
 
     if (getenv("AUDIO_DUMP_RUN_PUBLIC_WRITE_ALLOC_TEST") != NULL) {
@@ -2443,6 +2512,7 @@ int main(void) {
     test_init_retry_path();
     test_init_failure_path();
     test_init_do_init_failures();
+    test_init_setclock_fallback();
     test_init_wait_path();
     test_whitebox_coverage_shim();
 

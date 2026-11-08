@@ -7,6 +7,7 @@
 #include <stdatomic.h>
 #include <stdint.h>
 #include <sys/statvfs.h>
+#include <time.h>
 
 #define STORAGE_CHECK_INTERVAL_MS 1000
 #define STORAGE_LOW_THRESHOLD_MB 500
@@ -35,6 +36,9 @@ typedef enum {
 typedef struct {
     pthread_mutex_t mutex;
     pthread_cond_t cond;
+    /* Clock the condition variable was created with. Every timed wait must
+     * compute its deadline from this same clock id. */
+    clockid_t cond_clock_id;
     pthread_t writer_thread;
     queue_t queue;
     session_manager_t sessions;

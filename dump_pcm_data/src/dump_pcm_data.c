@@ -61,6 +61,7 @@ static void shutdown_module(void) {
 
 static int do_init_once(void) {
     pthread_condattr_t cond_attr;
+    clockid_t cond_clock = CLOCK_REALTIME;
 
     logger_init(NULL);
     LOGI("Initializing dump module");
@@ -72,10 +73,13 @@ static int do_init_once(void) {
         pthread_mutex_destroy(&g_ctx.mutex);
         return -1;
     }
-    if (pthread_condattr_setclock(&cond_attr, CLOCK_MONOTONIC) != 0) {
-        pthread_condattr_destroy(&cond_attr);
-        pthread_mutex_destroy(&g_ctx.mutex);
-        return -1;
+    /* winpthreads and some libc builds reject CLOCK_MONOTONIC here. Losing the
+     * monotonic clock only weakens timeout accuracy; it must not disable dumping.
+     * The writer thread reads g_ctx.cond_clock_id so both sides always agree. */
+    if (pthread_condattr_setclock(&cond_attr, CLOCK_MONOTONIC) == 0) {
+        cond_clock = CLOCK_MONOTONIC;
+    } else {
+        LOGW("Condition variable clock: CLOCK_MONOTONIC unsupported, falling back to CLOCK_REALTIME");
     }
     if (pthread_cond_init(&g_ctx.cond, &cond_attr) != 0) {
         pthread_condattr_destroy(&cond_attr);
@@ -83,6 +87,7 @@ static int do_init_once(void) {
         return -1;
     }
     pthread_condattr_destroy(&cond_attr);
+    g_ctx.cond_clock_id = cond_clock;
 
     queue_init(&g_ctx.queue, MAX_QUEUE_BLOCKS, MAX_QUEUE_BYTES);
     session_mgr_init(&g_ctx.sessions);

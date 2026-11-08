@@ -56,7 +56,8 @@ void *writer_thread_func(void *arg) {
         pthread_mutex_lock(&g_ctx.mutex);
         while (queue_is_empty(&g_ctx.queue) && g_ctx.writer_running) {
             struct timespec ts;
-            clock_gettime(CLOCK_MONOTONIC, &ts);
+            /* Must match the clock the condition variable was created with. */
+            clock_gettime(g_ctx.cond_clock_id, &ts);
             ts.tv_nsec += WRITER_POLL_INTERVAL_MS * 1000000L;
             if (ts.tv_nsec >= 1000000000L) {
                 ts.tv_sec += 1;
