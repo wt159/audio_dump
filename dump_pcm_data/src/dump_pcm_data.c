@@ -103,7 +103,8 @@ static int do_init_once(void) {
     atomic_store(&g_ctx.low_storage_triggered, 0);
     atomic_store(&g_ctx.last_storage_check, 0);
     atomic_store(&g_ctx.storage_cache_mb, 0);
-    atomic_store(&g_ctx.enabled, 0);
+    /* g_ctx.enabled is owned by check_enabled(), which runs before init now.
+     * Resetting it here would drop the very first enabled write. */
 
     file_mgr_cleanup(100, 7);
     if (g_dump_pthread_create_fn(&g_ctx.writer_thread, NULL, writer_thread_func, NULL) != 0) {
