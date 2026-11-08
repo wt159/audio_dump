@@ -2201,6 +2201,28 @@ static int run_isolated_setclock_fallback_test(void) {
     return 0;
 }
 
+static int run_isolated_disabled_write_test(void) {
+    dump_status_t status = {0};
+    char dir[256] = {0};
+
+    snprintf(dir, sizeof(dir), "/tmp/audio_dump_test/disabled_%d/", (int)getpid());
+    rmdir(dir);
+    file_mgr_set_root_dir(dir);
+
+    dump_pcm_data_write("x", 1, "disabled", "case");
+
+    /* Initialization creates the root directory, so its absence proves the
+     * module never initialized while the switch was off. */
+    if (path_exists(dir)) {
+        return 1;
+    }
+    if (dump_pcm_data_get_status(&status) != -1) {
+        return 1;
+    }
+
+    return 0;
+}
+
 static int run_isolated_init_failpoint_test(void) {
     const char *failpoint = getenv("AUDIO_DUMP_INIT_FAILPOINT");
     dump_status_t status = {0};
@@ -2353,6 +2375,27 @@ static void test_init_setclock_fallback(void) {
     pass(name);
 }
 
+static void test_disabled_write_has_no_side_effects(void) {
+    const char *name = "disabled write has no side effects";
+    pid_t pid = fork();
+    int status = 0;
+
+    if (pid == 0) {
+        setenv("AUDIO_DUMP_ENABLED", "0", 1);
+        setenv("AUDIO_DUMP_RUN_DISABLED_WRITE_TEST", "1", 1);
+        execl("./dump_pcm_test", "./dump_pcm_test", NULL);
+        _exit(2);
+    }
+
+    waitpid(pid, &status, 0);
+    if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
+        fail(name, "disabled write produced init side effects");
+        return;
+    }
+
+    pass(name);
+}
+
 static void test_init_wait_path(void) {
     const char *name = "init wait path";
     pid_t pid = fork();
@@ -2424,6 +2467,10 @@ int main(void) {
 
     if (getenv("AUDIO_DUMP_RUN_SETCLOCK_FALLBACK_TEST") != NULL) {
         return run_isolated_setclock_fallback_test();
+    }
+
+    if (getenv("AUDIO_DUMP_RUN_DISABLED_WRITE_TEST") != NULL) {
+        return run_isolated_disabled_write_test();
     }
 
     if (getenv("AUDIO_DUMP_RUN_PUBLIC_WRITE_ALLOC_TEST") != NULL) {
@@ -2513,6 +2560,7 @@ int main(void) {
     test_init_failure_path();
     test_init_do_init_failures();
     test_init_setclock_fallback();
+    test_disabled_write_has_no_side_effects();
     test_init_wait_path();
     test_whitebox_coverage_shim();
 

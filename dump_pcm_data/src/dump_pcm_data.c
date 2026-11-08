@@ -168,14 +168,18 @@ void dump_pcm_data_write(const char *buffer, uint32_t buffer_size, const char *k
     session_info_t *stopped_session = NULL;
     uint64_t now = 0;
 
-    if (ensure_initialized() != 0) {
-        return;
-    }
     if (buffer_size == 0 || (buffer == NULL && buffer_size > 0) ||
         !dump_key_is_valid(key1) || !dump_key_is_valid(key2)) {
         return;
     }
+    /* The master switch gates initialization: while it is off the module must
+     * not create the writer thread, create directories, or run the retention
+     * cleanup. check_enabled() only touches zero-initialized atomics, so it is
+     * safe to call before ensure_initialized(). */
     if (check_enabled() != 0) {
+        return;
+    }
+    if (ensure_initialized() != 0) {
         return;
     }
     now = get_timestamp_ms();
