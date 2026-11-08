@@ -47,6 +47,13 @@ void stop_session_locked(session_info_t *session) {
 void *writer_thread_func(void *arg) {
     (void)arg;
 
+    /* Retention scan is opendir + per-file stat + O(n^2) sort + unlink, so it
+     * must not run on the caller thread. file_mgr_init() already created the
+     * root directory, which check_storage() needs, so only the cleanup moves. */
+    if (file_mgr_cleanup(100, 7) != 0) {
+        LOGW("Initial retention cleanup failed");
+    }
+
     while (g_ctx.writer_running) {
         data_block_t block = {0};
         session_info_t *session = NULL;

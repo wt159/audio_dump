@@ -106,7 +106,8 @@ static int do_init_once(void) {
     /* g_ctx.enabled is owned by check_enabled(), which runs before init now.
      * Resetting it here would drop the very first enabled write. */
 
-    file_mgr_cleanup(100, 7);
+    /* Retention cleanup runs on the writer thread; only the directory creation
+     * stays here because check_storage() needs the directory to exist. */
     if (g_dump_pthread_create_fn(&g_ctx.writer_thread, NULL, writer_thread_func, NULL) != 0) {
         g_ctx.writer_running = 0;
         file_mgr_destroy(&g_ctx.file_mgr);
