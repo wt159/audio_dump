@@ -39,6 +39,7 @@
 | D2 | 运行时开关（push 式） | Issue（方案修正） |
 | D3 | 根目录运行时配置公开化 + 路径安全 | Issue（范围扩大） |
 | D5 | CMake 构建目标 + MinGW 编译 | Issue |
+| D6 | 观测接口按构建选项开放（`DUMP_PCM_DESKTOP_OBSERVE`） | Issue（折中，默认导出契约不变） |
 | C1 | 开启态首次 write 的磁盘 I/O 下沉到写线程 | 本方案新增 |
 | C2 | `file_mgr_cleanup` 文件名匹配收紧为 `.pcm` 后缀 | 本方案新增，D3 的前置条件 |
 | C3 | 未初始化时状态查询接口的语义定义 | 本方案新增，D1 的连带影响 |
@@ -251,16 +252,20 @@ G-01 属于既有缺陷，与本方案无关，但不修它后续所有 PR 都�
 | T-07 | MinGW 构建 + 运行 | 编译通过；初始化后真实落盘（直接暴露 B3 类问题） |
 | T-08 | 桌面观测宏开启构建 | 观测接口可编译、可链接、可调用 |
 
-### 6.3 需要同步修改的既有资产
+### 6.3 需要同步修改的既有资产（实际落地情况）
 
-- `test/main.c`：`run_isolated_init_failpoint_test()`(:2161) 目前对四个 failpoint 一律断言
-  `get_status() == -1`，需把 `clock` 分支拆出并反转为 T-01 的正向断言；
-  4 个 `fake_statvfs_*` 桩迁移到字节数接口；新增 mkdir/opendir wrap。
-- `test/whitebox.c`：`:35`、`:46` 的符号别名映射同步更名。
-- `Makefile`：LDFLAGS 增加 `-Wl,--wrap=mkdir -Wl,--wrap=opendir`（T-03 需要）。
-- `AGENTS.md`：Runtime knobs 补 MinGW 说明；新增接口写入"High-signal implementation facts"。
-- 不修改：`test/check_shared_library_exports.sh`、`test/check_header_contract.sh`、`Android.mk`。
-- 仅修正路径：`test/check_docs_build_contract.sh` 的文档引用（G-01），不断言逻辑。
+- `test/main.c`：`clock` 分支已从 failpoint 列表拆出并改为 `init setclock fallback` 正向用例；
+  4 个 `fake_statvfs_*` 已迁到字节接口并更名 `fake_storage_*`；新增 `--wrap=opendir` 计数（T-03）。
+- `test/whitebox.c`：符号别名已随改名同步，并为新增的 `dump_pcm_set_enabled` / `dump_pcm_set_root_dir` /
+  `g_enabled_override` 补了别名（shim TU 与主 TU 否则会重复定义）。
+- `Makefile`：LDFLAGS 增加 `-Wl,--wrap=opendir`。未增加 `--wrap=mkdir`——目录创建仍在调用线程，
+  真正重的是扫描与删除。
+- `AGENTS.md`：环境约束、开关门控、cleanup 位置、公开头约束、新接口均已写入。
+- 导出契约：`test/check_shared_library_exports.sh` 一字未改。
+- 头部契约：`test/check_header_contract.sh` 的原有断言不变，仅新增一条
+  `DUMP_PCM_DESKTOP_OBSERVE` 正向编译用例（`test/header_desktop_observe.c`）。
+- `Android.mk`：未改。
+- `test/check_docs_build_contract.sh`：仅修正文档路径（G-01），断言逻辑未动。
 
 ### 6.4 验收标准
 

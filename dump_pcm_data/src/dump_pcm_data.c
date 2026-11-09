@@ -276,15 +276,22 @@ void dump_pcm_set_enabled(int enabled) {
 }
 
 int dump_pcm_set_root_dir(const char *dir) {
+    int rc = -1;
+
     if (dir == NULL || dir[0] == '\0' || strlen(dir) >= 255) {
         return -1;
     }
-    if (atomic_load(&g_init_state) != DUMP_INIT_UNINITIALIZED) {
-        return -1;
-    }
 
-    file_mgr_set_root_dir(dir);
-    return 0;
+    /* Hold the init lock so a concurrent first write cannot initialize with the
+     * old directory between the state check and the assignment. */
+    pthread_mutex_lock(&g_init_mutex);
+    if (atomic_load(&g_init_state) == DUMP_INIT_UNINITIALIZED) {
+        file_mgr_set_root_dir(dir);
+        rc = 0;
+    }
+    pthread_mutex_unlock(&g_init_mutex);
+
+    return rc;
 }
 
 #if defined(DUMP_PCM_PC) || !defined(ANDROID)
