@@ -2395,22 +2395,22 @@ static void test_evicted_file_handle_reopens(void) {
 
     reset_test_dir();
 
-    /* PC config allows two open files. Keep A and B idle past
-     * IDLE_TIMEOUT_SEC, then force a third session so the file manager evicts
-     * A's handle behind its back. */
+    /* PC config allows two open files. Idle A past IDLE_TIMEOUT_SEC, fill the
+     * table with B and C so opening C evicts A's handle behind its back. */
     dump_pcm_data_write("a", 1, "evict", "a");
-    dump_pcm_data_write("b", 1, "evict", "b");
     usleep(1050000);
+    dump_pcm_data_write("b", 1, "evict", "b");
+    usleep(60000);
     dump_pcm_data_write("c", 1, "evict", "c");
     usleep(60000);
 
-    /* Still inside the 2s rollover window. A must reopen its file by evicting
-     * the now-idle B, then append rather than write through a closed stream. */
+    /* Free a slot, then write A again inside the 2s rollover window: it must
+     * reopen its file and append, not write through the closed stream. */
+    stop_and_wait("evict", "b");
     dump_pcm_data_write("y", 1, "evict", "a");
     usleep(60000);
 
     stop_and_wait("evict", "a");
-    stop_and_wait("evict", "b");
     stop_and_wait("evict", "c");
 
     count = find_pcm_files(files, 8);
