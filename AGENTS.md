@@ -51,3 +51,17 @@
 ## Keep in mind
 - Generated artifacts live under `dump_pcm_data/` and are ignored via the local `.gitignore` (`*.o`, `*.gcda`, `*.gcno`, `*.gcov`, `dump_pcm_test`).
 - Avoid editing docs to match stale prose unless the code behavior has also changed.
+
+## Agent skills
+
+### Issue tracker
+
+Issues live in GitHub Issues; use `gh` for every operation. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Five canonical roles mapped to their default strings (`needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`). See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: `GLOSSARY.md` at the repo root and ADRs under `docs/adr/`. See `docs/agents/domain.md`.
