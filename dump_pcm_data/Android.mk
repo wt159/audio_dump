@@ -10,6 +10,7 @@ LOCAL_SRC_FILES := \
     src/file_mgr.c \
     src/dump_control.c \
     src/dump_writer.c \
+    src/sidecar.c \
     src/dump_pcm_data.c
 
 LOCAL_CFLAGS := \

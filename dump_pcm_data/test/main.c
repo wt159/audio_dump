@@ -9,6 +9,7 @@
 #include "../src/logger.h"
 #include "../src/queue.h"
 #include "../src/session.h"
+#include "../src/sidecar.h"
 
 #include <dirent.h>
 #include <errno.h>
@@ -1319,6 +1320,93 @@ static void test_write_ex_without_format_matches_legacy(void) {
 
     if (memcmp(legacy, via_ex, 3) != 0) {
         fail(name, "byte content differs");
+        return;
+    }
+
+    pass(name);
+}
+
+static void test_sidecar_utf8_validation(void) {
+    const char *name = "sidecar utf8 validation";
+
+    if (!sidecar_is_valid_utf8("abc") || !sidecar_is_valid_utf8("中文") ||
+        sidecar_is_valid_utf8(NULL)) {
+        fail(name, "baseline validation wrong");
+        return;
+    }
+    if (sidecar_is_valid_utf8("\xC0\xAF")) {
+        fail(name, "overlong sequence accepted");
+        return;
+    }
+    if (sidecar_is_valid_utf8("\x80")) {
+        fail(name, "lone continuation accepted");
+        return;
+    }
+    if (sidecar_is_valid_utf8("\xE4\xB8")) {
+        fail(name, "truncated sequence accepted");
+        return;
+    }
+    if (sidecar_is_valid_utf8("\xED\xA0\x80")) {
+        fail(name, "surrogate accepted");
+        return;
+    }
+
+    pass(name);
+}
+
+static void test_sidecar_json_builder(void) {
+    const char *name = "sidecar json builder";
+    dump_pcm_file_meta_t meta = {0};
+    char buf[512] = {0};
+    int len = 0;
+
+    snprintf(meta.key1, sizeof(meta.key1), "out\"a");
+    snprintf(meta.key2, sizeof(meta.key2), "b\\c");
+    meta.generation = 3;
+    meta.split_index = 1;
+    meta.format.sample_rate = 48000;
+    meta.format.channel_count = 2;
+    meta.format.bits_per_sample = 16;
+    meta.format.sample_format = DUMP_PCM_FORMAT_S16_LE;
+    meta.start_time_unix_ms = 1776397812123ULL;
+
+    len = sidecar_build_json(buf, sizeof(buf), "x.pcm", &meta, true, 1048576ULL, 1776397825871ULL);
+    if (len <= 0) {
+        fail(name, "complete json failed");
+        return;
+    }
+    if (strstr(buf, "\"total_bytes\": 1048576") == NULL ||
+        strstr(buf, "\"complete\": true") == NULL ||
+        strstr(buf, "\"sample_format\": \"s16_le\"") == NULL ||
+        strstr(buf, "\"key1\": \"out\\\"a\"") == NULL ||
+        strstr(buf, "\"key2\": \"b\\\\c\"") == NULL) {
+        fail(name, "complete json content wrong");
+        return;
+    }
+
+    len = sidecar_build_json(buf, sizeof(buf), "x.pcm", &meta, false, 0, 0);
+    if (len <= 0 || strstr(buf, "total_bytes") != NULL || strstr(buf, "\"complete\": false") == NULL) {
+        fail(name, "partial json content wrong");
+        return;
+    }
+
+    if (sidecar_build_json(buf, 16, "x.pcm", &meta, true, 1, 1) != -1) {
+        fail(name, "small buffer accepted");
+        return;
+    }
+
+    meta.format.sample_format = DUMP_PCM_FORMAT_UNKNOWN;
+    if (sidecar_build_json(buf, sizeof(buf), "x.pcm", &meta, true, 1, 1) != -1) {
+        fail(name, "unknown format accepted");
+        return;
+    }
+
+    meta.format.sample_format = DUMP_PCM_FORMAT_S16_LE;
+    meta.key1[0] = (char)0xC0;
+    meta.key1[1] = (char)0xAF;
+    meta.key1[2] = '\0';
+    if (sidecar_build_json(buf, sizeof(buf), "x.pcm", &meta, true, 1, 1) != -1) {
+        fail(name, "invalid utf8 key accepted");
         return;
     }
 
@@ -2821,6 +2909,8 @@ int main(void) {
     test_format_validation();
     test_write_ex_captures_first_format();
     test_write_ex_without_format_matches_legacy();
+    test_sidecar_utf8_validation();
+    test_sidecar_json_builder();
     test_queue_allocation_failures();
     test_session_allocation_failures();
     test_public_write_allocation_failures();

@@ -2,7 +2,7 @@ CC = gcc
 CFLAGS = -Wall -Wextra -std=c11 -g -Iinclude -Isrc -DDUMP_PCM_PC -D_POSIX_C_SOURCE=200809L -fprofile-arcs -ftest-coverage
 LDFLAGS = -lpthread -fprofile-arcs -ftest-coverage -Wl,--wrap=malloc -Wl,--wrap=calloc -Wl,--wrap=realloc -Wl,--wrap=queue_pop -Wl,--wrap=pthread_mutex_init -Wl,--wrap=pthread_condattr_init -Wl,--wrap=pthread_condattr_setclock -Wl,--wrap=pthread_cond_init -Wl,--wrap=pthread_cond_timedwait -Wl,--wrap=opendir
 
-SRC = src/logger.c src/queue.c src/session.c src/file_mgr.c src/dump_control.c src/dump_writer.c src/dump_pcm_data.c
+SRC = src/logger.c src/queue.c src/session.c src/file_mgr.c src/dump_control.c src/dump_writer.c src/sidecar.c src/dump_pcm_data.c
 BUILD_DIR = build
 OBJ_DIR = $(BUILD_DIR)/src
 TEST_OBJ_DIR = $(BUILD_DIR)/test
@@ -68,7 +68,7 @@ coverage: check-contracts all
 	@AUDIO_DUMP_ENABLED=1 AUDIO_DUMP_DIR=/tmp/audio_dump_test ./$(TARGET)
 	@echo "Generating coverage report..."
 	@true
-	@gcov -f -p -o $(OBJ_DIR) src/logger.c src/queue.c src/session.c src/file_mgr.c src/dump_control.c src/dump_writer.c src/dump_pcm_data.c || true
+	@gcov -f -p -o $(OBJ_DIR) src/logger.c src/queue.c src/session.c src/file_mgr.c src/dump_control.c src/dump_writer.c src/sidecar.c src/dump_pcm_data.c || true
 	@mv -f *.gcov $(PROD_COV_DIR)/ 2>/dev/null || true
 	@mv -f *#.gcov $(PROD_COV_DIR)/ 2>/dev/null || true
 	@gcov -f -p -o $(TEST_OBJ_DIR) test/main.c || true
