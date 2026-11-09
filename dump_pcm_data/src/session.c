@@ -200,3 +200,37 @@ session_file_action_t session_file_action(const session_info_t *session, bool ha
 
     return SESSION_FILE_USE;
 }
+
+bool session_format_is_valid(const dump_pcm_format_t *format) {
+    if (format == NULL) {
+        return false;
+    }
+    if (format->sample_rate < 8000 || format->sample_rate > 384000) {
+        return false;
+    }
+    if (format->channel_count < 1 || format->channel_count > 8) {
+        return false;
+    }
+
+    switch (format->sample_format) {
+    case DUMP_PCM_FORMAT_S16_LE:
+        return format->bits_per_sample == 16;
+    case DUMP_PCM_FORMAT_S24_LE:
+    case DUMP_PCM_FORMAT_S24_3LE:
+        return format->bits_per_sample == 24;
+    case DUMP_PCM_FORMAT_S32_LE:
+    case DUMP_PCM_FORMAT_FLOAT_LE:
+        return format->bits_per_sample == 32;
+    default:
+        return false;
+    }
+}
+
+void session_capture_format(session_info_t *session, const dump_pcm_format_t *format) {
+    if (session == NULL || session->has_format || !session_format_is_valid(format)) {
+        return;
+    }
+
+    session->format = *format;
+    session->has_format = true;
+}

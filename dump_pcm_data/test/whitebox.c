@@ -29,6 +29,7 @@
 #include "../src/file_mgr.c"
 
 #define dump_pcm_data_write dump_pcm_data_write__whitebox
+#define dump_pcm_data_write_ex dump_pcm_data_write_ex__whitebox
 #define dump_pcm_data_stop dump_pcm_data_stop__whitebox
 #define dump_pcm_set_enabled dump_pcm_set_enabled__whitebox
 #define dump_pcm_set_root_dir dump_pcm_set_root_dir__whitebox

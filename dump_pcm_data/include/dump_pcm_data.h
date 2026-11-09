@@ -33,10 +33,35 @@ typedef struct {
     uint32_t active_session_count;
 } dump_status_t;
 
+typedef enum {
+    DUMP_PCM_FORMAT_UNKNOWN = 0,
+    DUMP_PCM_FORMAT_S16_LE,
+    DUMP_PCM_FORMAT_S24_LE,
+    DUMP_PCM_FORMAT_S24_3LE,
+    DUMP_PCM_FORMAT_S32_LE,
+    DUMP_PCM_FORMAT_FLOAT_LE
+} dump_pcm_sample_format_t;
+
+typedef struct {
+    uint32_t sample_rate;
+    uint16_t channel_count;
+    uint16_t bits_per_sample;
+    dump_pcm_sample_format_t sample_format;
+} dump_pcm_format_t;
+
+/* Same contract as dump_pcm_data_write(), plus the stream format, which is
+ * captured once on the first block of a session and ignored afterwards.
+ * Passing NULL is exactly equivalent to the legacy call. */
+DUMP_PCM_API void dump_pcm_data_write_ex(const char *buffer, uint32_t buffer_size,
+                                         const char *key1, const char *key2,
+                                         const dump_pcm_format_t *format);
+
 typedef struct {
     char key1[DUMP_PCM_KEY_MAX_LEN + 1];
     char key2[DUMP_PCM_KEY_MAX_LEN + 1];
     uint64_t written_bytes;
+    bool has_format;
+    dump_pcm_format_t format;
 } dump_session_info_t;
 
 /* Query APIs return -1 when the module has never been enabled. The master

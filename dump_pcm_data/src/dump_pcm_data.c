@@ -165,7 +165,8 @@ static int ensure_initialized(void) {
     }
 }
 
-void dump_pcm_data_write(const char *buffer, uint32_t buffer_size, const char *key1, const char *key2) {
+void dump_pcm_data_write_ex(const char *buffer, uint32_t buffer_size, const char *key1, const char *key2,
+                            const dump_pcm_format_t *format) {
     data_block_t block = {0};
     session_info_t *session = NULL;
     session_info_t *rollover_session = NULL;
@@ -222,6 +223,9 @@ void dump_pcm_data_write(const char *buffer, uint32_t buffer_size, const char *k
         LOGI("Start dump session: key1=%s key2=%s gen=%u", key1, key2, session->generation);
     }
 
+    /* First valid format wins; later blocks may repeat it and are ignored. */
+    session_capture_format(session, format);
+
     session->last_write_time = now;
 
     dump_key_copy(block.key1, key1);
@@ -248,6 +252,10 @@ void dump_pcm_data_write(const char *buffer, uint32_t buffer_size, const char *k
     }
     pthread_cond_signal(&g_ctx.cond);
     pthread_mutex_unlock(&g_ctx.mutex);
+}
+
+void dump_pcm_data_write(const char *buffer, uint32_t buffer_size, const char *key1, const char *key2) {
+    dump_pcm_data_write_ex(buffer, buffer_size, key1, key2, NULL);
 }
 
 void dump_pcm_data_stop(const char *key1, const char *key2) {
