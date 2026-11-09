@@ -185,3 +185,18 @@ uint32_t session_live_count(session_manager_t *mgr) {
 
     return count;
 }
+
+session_file_action_t session_file_action(const session_info_t *session, bool handle_tracked,
+                                          uint64_t size_limit) {
+    if (session == NULL || session->fp == NULL) {
+        return SESSION_FILE_REOPEN;
+    }
+    if (!handle_tracked) {
+        return SESSION_FILE_REOPEN;
+    }
+    if (size_limit > 0 && session->file_size >= size_limit) {
+        return SESSION_FILE_ROLLOVER;
+    }
+
+    return SESSION_FILE_USE;
+}
