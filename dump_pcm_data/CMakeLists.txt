@@ -12,6 +12,7 @@ set(AUDIO_DUMP_SOURCES
     src/file_mgr.c
     src/dump_control.c
     src/dump_writer.c
+    src/sidecar.c
     src/dump_pcm_data.c)
 
 add_library(audio_dump STATIC ${AUDIO_DUMP_SOURCES})

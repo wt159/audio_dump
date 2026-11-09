@@ -64,8 +64,7 @@ jobs:
         working-directory: dump_pcm_data
         run: |
           mkdir -p build/mingw
-          for f in src/logger.c src/queue.c src/session.c src/file_mgr.c \
-                   src/dump_control.c src/dump_writer.c src/dump_pcm_data.c; do
+          for f in src/*.c; do
             echo "--- $f"
             x86_64-w64-mingw32-gcc -std=c11 -Wall -Wextra -Iinclude -Isrc \
               -DDUMP_PCM_PC -D_POSIX_C_SOURCE=200809L \
