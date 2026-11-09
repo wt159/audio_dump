@@ -1175,6 +1175,39 @@ static void test_session_highest_generation_lookup(void) {
     pass(name);
 }
 
+static void test_session_file_action_policy(void) {
+    const char *name = "session file action policy";
+    session_info_t session = {0};
+
+    if (session_file_action(NULL, false, 1024) != SESSION_FILE_REOPEN ||
+        session_file_action(&session, false, 1024) != SESSION_FILE_REOPEN) {
+        fail(name, "missing handle must reopen");
+        return;
+    }
+
+    session.fp = stdout;
+    if (session_file_action(&session, false, 1024) != SESSION_FILE_REOPEN) {
+        fail(name, "untracked handle must reopen");
+        return;
+    }
+    if (session_file_action(&session, true, 1024) != SESSION_FILE_USE) {
+        fail(name, "tracked handle below the limit must be reused");
+        return;
+    }
+
+    session.file_size = 1024;
+    if (session_file_action(&session, true, 1024) != SESSION_FILE_ROLLOVER) {
+        fail(name, "size limit must roll over");
+        return;
+    }
+    if (session_file_action(&session, false, 1024) != SESSION_FILE_REOPEN) {
+        fail(name, "evicted handle wins over the size limit");
+        return;
+    }
+
+    pass(name);
+}
+
 static void test_queue_allocation_failures(void) {
     const char *name = "queue allocation failures";
     queue_t queue;
@@ -2667,6 +2700,7 @@ int main(void) {
     test_queue_empty_pop_and_byte_limit();
     test_session_direct();
     test_session_highest_generation_lookup();
+    test_session_file_action_policy();
     test_queue_allocation_failures();
     test_session_allocation_failures();
     test_public_write_allocation_failures();

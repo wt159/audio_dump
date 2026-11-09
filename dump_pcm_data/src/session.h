@@ -16,6 +16,14 @@ typedef enum {
     SESSION_STOPPING = 1
 } session_state_t;
 
+/* What the writer should do with a session's file handle for the next block.
+ * Pure decision so it can be tested without threads or timing. */
+typedef enum {
+    SESSION_FILE_USE = 0,
+    SESSION_FILE_REOPEN = 1,
+    SESSION_FILE_ROLLOVER = 2
+} session_file_action_t;
+
 typedef struct {
     char key1[KEY1_MAX_LEN + 1];
     char key2[KEY2_MAX_LEN + 1];
@@ -47,5 +55,11 @@ void session_destroy(session_manager_t *mgr, session_info_t *session);
 session_info_t *session_get_or_create(session_manager_t *mgr, const char *key1, const char *key2);
 uint32_t session_count(session_manager_t *mgr);
 uint32_t session_live_count(session_manager_t *mgr);
+
+/* handle_tracked reports whether the file manager still owns session->fp.
+ * A handle can be closed behind the session's back when MAX_OPEN_FILES is
+ * reached, and writing through it would touch a closed FILE*. */
+session_file_action_t session_file_action(const session_info_t *session, bool handle_tracked,
+                                          uint64_t size_limit);
 
 #endif

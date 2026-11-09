@@ -86,25 +86,21 @@ void *writer_thread_func(void *arg) {
         session = session_find_by_generation(&g_ctx.sessions, block.key1, block.key2, block.generation);
         if (session != NULL) {
             bool is_new = false;
+            bool tracked = session->fp != NULL && file_mgr_is_tracking(&g_ctx.file_mgr, session->fp);
+            session_file_action_t action = session_file_action(session, tracked, get_file_size_limit_bytes());
 
-            /* The file manager closes the stalest handle when MAX_OPEN_FILES is
-             * reached, without telling the owning session. Reopen instead of
-             * writing through a closed FILE*. */
-            if (session->fp != NULL && !file_mgr_is_tracking(&g_ctx.file_mgr, session->fp)) {
-                session->fp = NULL;
-            }
-
-            if (session->fp != NULL && session->file_size >= get_file_size_limit_bytes()) {
-                if (file_mgr_is_tracking(&g_ctx.file_mgr, session->fp)) {
+            if (action == SESSION_FILE_ROLLOVER) {
+                if (tracked) {
                     file_mgr_close(&g_ctx.file_mgr, session->fp);
                 }
                 session->split_index++;
                 session->fp = NULL;
                 session->file_path[0] = '\0';
                 session->file_size = 0;
+                action = SESSION_FILE_REOPEN;
             }
 
-            if (session->fp == NULL) {
+            if (action == SESSION_FILE_REOPEN) {
                 session->fp = file_mgr_get_handle(&g_ctx.file_mgr, session->key1, session->key2,
                                                   session->generation, session->split_index,
                                                   session->file_path,
