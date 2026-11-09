@@ -2241,6 +2241,50 @@ static int run_isolated_cleanup_deferred_test(void) {
     return 0;
 }
 
+static int run_isolated_runtime_controls_test(void) {
+    dump_status_t status = {0};
+    char dir[256] = {0};
+    char other[256] = {0};
+
+    snprintf(dir, sizeof(dir), "/tmp/audio_dump_test/rtc_%d/", (int)getpid());
+    snprintf(other, sizeof(other), "/tmp/audio_dump_test/rtc_other_%d/", (int)getpid());
+    rmdir(dir);
+    rmdir(other);
+
+    if (dump_pcm_set_root_dir(dir) != 0) {
+        return 1;
+    }
+
+    /* The pushed switch must win over AUDIO_DUMP_ENABLED=1 from the parent. */
+    dump_pcm_set_enabled(0);
+    dump_pcm_data_write("x", 1, "rtc", "off");
+    usleep(60000);
+    if (path_exists(dir)) {
+        return 1;
+    }
+
+    dump_pcm_set_enabled(1);
+    dump_pcm_data_write("x", 1, "rtc", "on");
+    stop_and_wait("rtc", "on");
+
+    if (count_pcm_files() != 1) {
+        return 1;
+    }
+    if (dump_pcm_data_get_status(&status) != 0 || !status.enabled) {
+        return 1;
+    }
+
+    /* The root directory is frozen once the module is initialized. */
+    if (dump_pcm_set_root_dir(other) != -1) {
+        return 1;
+    }
+    if (strcmp(file_mgr_get_root_dir(), dir) != 0) {
+        return 1;
+    }
+
+    return 0;
+}
+
 static int run_isolated_disabled_write_test(void) {
     dump_status_t status = {0};
     char dir[256] = {0};
@@ -2457,6 +2501,27 @@ static void test_cleanup_deferred_to_writer_thread(void) {
     pass(name);
 }
 
+static void test_runtime_controls(void) {
+    const char *name = "runtime switch and root directory";
+    pid_t pid = fork();
+    int status = 0;
+
+    if (pid == 0) {
+        setenv("AUDIO_DUMP_ENABLED", "1", 1);
+        setenv("AUDIO_DUMP_RUN_RUNTIME_CONTROLS_TEST", "1", 1);
+        execl("./dump_pcm_test", "./dump_pcm_test", NULL);
+        _exit(2);
+    }
+
+    waitpid(pid, &status, 0);
+    if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
+        fail(name, "runtime controls did not take effect");
+        return;
+    }
+
+    pass(name);
+}
+
 static void test_init_wait_path(void) {
     const char *name = "init wait path";
     pid_t pid = fork();
@@ -2536,6 +2601,10 @@ int main(void) {
 
     if (getenv("AUDIO_DUMP_RUN_CLEANUP_DEFERRED_TEST") != NULL) {
         return run_isolated_cleanup_deferred_test();
+    }
+
+    if (getenv("AUDIO_DUMP_RUN_RUNTIME_CONTROLS_TEST") != NULL) {
+        return run_isolated_runtime_controls_test();
     }
 
     if (getenv("AUDIO_DUMP_RUN_PUBLIC_WRITE_ALLOC_TEST") != NULL) {
@@ -2627,6 +2696,7 @@ int main(void) {
     test_init_setclock_fallback();
     test_disabled_write_has_no_side_effects();
     test_cleanup_deferred_to_writer_thread();
+    test_runtime_controls();
     test_init_wait_path();
     test_whitebox_coverage_shim();
 

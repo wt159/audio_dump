@@ -37,6 +37,13 @@ jobs:
         working-directory: dump_pcm_data
         run: make coverage
 
+      # Verifies the CMake target, including the desktop observe opt-in.
+      - name: CMake static library
+        working-directory: dump_pcm_data
+        run: |
+          cmake -S . -B build/cmake -DDUMP_PCM_DESKTOP_OBSERVE=ON
+          cmake --build build/cmake
+
   mingw-compile:
     name: MinGW cross compile check
     runs-on: ubuntu-latest

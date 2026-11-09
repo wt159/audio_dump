@@ -15,6 +15,15 @@
 DUMP_PCM_API void dump_pcm_data_write(const char *buffer, uint32_t buffer_size, const char *key1, const char *key2);
 DUMP_PCM_API void dump_pcm_data_stop(const char *key1, const char *key2);
 
+/* Runtime master switch. enabled: 1 on, 0 off, -1 fall back to the platform
+ * source (Android property, desktop environment variable). Takes effect on the
+ * next write; turning it from off to on also clears the low-storage latch. */
+DUMP_PCM_API void dump_pcm_set_enabled(int enabled);
+
+/* Overrides the dump root directory. Must be called before the module is
+ * initialized; returns -1 and leaves the directory unchanged otherwise. */
+DUMP_PCM_API int dump_pcm_set_root_dir(const char *dir);
+
 typedef struct {
     bool enabled;
     bool low_storage_triggered;
@@ -32,10 +41,18 @@ typedef struct {
 
 /* Query APIs return -1 when the module has never been enabled. The master
  * switch gates initialization, so "disabled" and "not initialized" are
- * intentionally indistinguishable to callers. */
-#ifdef DUMP_PCM_INTERNAL_DEBUG_API
-int dump_pcm_data_get_status(dump_status_t *status);
-int dump_pcm_data_get_active_sessions(dump_session_info_t *sessions, int max_count, int *actual_count);
+ * intentionally indistinguishable to callers. Desktop builds opt in with
+ * DUMP_PCM_DESKTOP_OBSERVE, which also exports the symbols. */
+#if defined(DUMP_PCM_DESKTOP_OBSERVE)
+#define DUMP_PCM_OBSERVE_API DUMP_PCM_API
+#else
+#define DUMP_PCM_OBSERVE_API
+#endif
+
+#if defined(DUMP_PCM_INTERNAL_DEBUG_API) || defined(DUMP_PCM_DESKTOP_OBSERVE)
+DUMP_PCM_OBSERVE_API int dump_pcm_data_get_status(dump_status_t *status);
+DUMP_PCM_OBSERVE_API int dump_pcm_data_get_active_sessions(dump_session_info_t *sessions, int max_count,
+                                                           int *actual_count);
 #endif
 
 #endif
