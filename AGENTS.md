@@ -38,7 +38,7 @@
 - `make run` creates `/tmp/audio_dump_test` and runs the test binary with dump enabled.
 
 ## High-signal implementation facts
-- Public APIs are `dump_pcm_data_write()`, `dump_pcm_data_write_ex()`, `dump_pcm_data_stop()`, `dump_pcm_set_enabled()` and `dump_pcm_set_root_dir()`. Android HAL uses `write`/`stop` from `out_write()/in_read()` and `out_standby()/in_standby()`; `write_ex` only adds a format argument, and NULL is exactly equivalent to `write`.
+- Public APIs are `dump_pcm_data_write()`, `dump_pcm_data_write_ex()`, `dump_pcm_data_stop()`, `dump_pcm_set_enabled()`, `dump_pcm_set_root_dir()` and `dump_pcm_set_metadata_enabled()`. Android HAL uses `write`/`stop` from `out_write()/in_read()` and `out_standby()/in_standby()`; `write_ex` only adds a format argument, and NULL is exactly equivalent to `write`.
 - The master switch is checked before initialization: a disabled `dump_pcm_data_write()` does not create the writer thread, does not create directories, and does not run the retention cleanup.
 - Query APIs return -1 when the module has never been enabled, so "disabled" and "not initialized" are deliberately indistinguishable.
 - The public header must stay free of `<sys/statvfs.h>` and `<pthread.h>`; test-only injection points live in `src/dump_test_hooks.h`. Free-space probing goes through `dump_storage_query_fn_t` (bytes out), `statvfs` on POSIX and `GetDiskFreeSpaceExA` on Windows.

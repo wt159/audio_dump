@@ -97,6 +97,7 @@ void *writer_thread_func(void *arg) {
                 session->fp = NULL;
                 session->file_path[0] = '\0';
                 session->file_size = 0;
+                session->file_start_unix_ms = 0;
                 action = SESSION_FILE_REOPEN;
             }
 
@@ -105,8 +106,27 @@ void *writer_thread_func(void *arg) {
                                                   session->generation, session->split_index,
                                                   session->file_path,
                                                   sizeof(session->file_path), &is_new);
-                if (session->fp != NULL && is_new) {
-                    session->file_size = 0;
+                if (session->fp != NULL) {
+                    if (is_new) {
+                        session->file_size = 0;
+                        session->file_start_unix_ms = sidecar_now_unix_ms();
+                    } else if (session->file_start_unix_ms == 0) {
+                        session->file_start_unix_ms = sidecar_now_unix_ms();
+                    }
+                    /* The legacy path has no format, so it must produce no
+                     * sidecar at all; file_mgr_attach_meta() is the only
+                     * writer-side hook. */
+                    if (session->has_format) {
+                        dump_pcm_file_meta_t meta = {0};
+
+                        dump_key_copy(meta.key1, session->key1);
+                        dump_key_copy(meta.key2, session->key2);
+                        meta.generation = session->generation;
+                        meta.split_index = session->split_index;
+                        meta.format = session->format;
+                        meta.start_time_unix_ms = session->file_start_unix_ms;
+                        file_mgr_attach_meta(&g_ctx.file_mgr, session->fp, &meta, is_new);
+                    }
                 }
             }
             fp = session->fp;

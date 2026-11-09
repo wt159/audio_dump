@@ -9,7 +9,7 @@ rm -rf "$OUT_DIR"
 mkdir -p "$OUT_DIR"
 
 cc -shared -fPIC -fvisibility=hidden -std=c11 -Iinclude -Isrc -DDUMP_PCM_PC -D_POSIX_C_SOURCE=200809L \
-    src/logger.c src/queue.c src/session.c src/file_mgr.c src/dump_control.c src/dump_writer.c src/dump_pcm_data.c \
+    src/logger.c src/queue.c src/session.c src/file_mgr.c src/dump_control.c src/dump_writer.c src/sidecar.c src/dump_pcm_data.c \
     -lpthread -o "$SO_PATH"
 
 nm -D --defined-only "$SO_PATH" > "$EXPORTS_PATH"

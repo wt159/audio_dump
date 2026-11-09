@@ -39,6 +39,9 @@ typedef struct {
     uint32_t pending_blocks;
     bool has_format;
     dump_pcm_format_t format;
+    /* Wall-clock start of the current file, kept across handle eviction so a
+     * reopened file still reports its original start time. */
+    uint64_t file_start_unix_ms;
 } session_info_t;
 
 typedef struct {

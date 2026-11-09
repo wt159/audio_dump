@@ -426,6 +426,98 @@ static bool path_exists(const char *path) {
     return path != NULL && stat(path, &st) == 0;
 }
 
+static int count_json_files(void) {
+    DIR *dir = opendir(file_mgr_get_root_dir());
+    struct dirent *entry = NULL;
+    int count = 0;
+
+    if (dir == NULL) {
+        return 0;
+    }
+
+    while ((entry = readdir(dir)) != NULL) {
+        if (strstr(entry->d_name, ".json") != NULL) {
+            count++;
+        }
+    }
+
+    closedir(dir);
+    return count;
+}
+
+static void json_path_for_pcm(const char *pcm_path, char *out, size_t out_size) {
+    size_t len = 0;
+
+    if (pcm_path == NULL || out == NULL || out_size == 0) {
+        return;
+    }
+
+    len = strlen(pcm_path);
+    if (len + sizeof(".json") > out_size) {
+        return;
+    }
+    memcpy(out, pcm_path, len + 1);
+    if (len > 4 && strcmp(pcm_path + len - 4, ".pcm") == 0) {
+        memcpy(out + len - 4, ".json", sizeof(".json"));
+    }
+}
+
+static bool wait_for_sidecar(const char *json_path, int max_ms) {
+    for (int waited = 0; waited <= max_ms; waited += 5) {
+        if (path_exists(json_path)) {
+            return true;
+        }
+        usleep(5000);
+    }
+
+    return path_exists(json_path);
+}
+
+/* Reads a numeric JSON field written by sidecar_build_json(), e.g.
+ * "total_bytes": 4096. Returns false when the field is absent. */
+static bool json_uint_field(const char *json, const char *field, uint64_t *out) {
+    char needle[64];
+    const char *p = NULL;
+    char *end = NULL;
+
+    snprintf(needle, sizeof(needle), "\"%s\":", field);
+    p = strstr(json, needle);
+    if (p == NULL) {
+        return false;
+    }
+    p += strlen(needle);
+    while (*p == ' ') {
+        ++p;
+    }
+    if (*p < '0' || *p > '9') {
+        return false;
+    }
+
+    *out = strtoull(p, &end, 10);
+    return end != p;
+}
+
+static void remove_case_artifacts(void) {
+    DIR *dir = opendir(file_mgr_get_root_dir());
+    struct dirent *entry = NULL;
+
+    if (dir == NULL) {
+        return;
+    }
+
+    while ((entry = readdir(dir)) != NULL) {
+        char path[512];
+
+        if (strstr(entry->d_name, ".pcm") == NULL && strstr(entry->d_name, ".json") == NULL) {
+            continue;
+        }
+        snprintf(path, sizeof(path), "%s%s", file_mgr_get_root_dir(), entry->d_name);
+        remove(path);
+    }
+
+    closedir(dir);
+}
+
 static void stop_and_wait(const char *key1, const char *key2) {
     dump_pcm_data_stop(key1, key2);
     usleep(120000);
@@ -1410,6 +1502,251 @@ static void test_sidecar_json_builder(void) {
         return;
     }
 
+    pass(name);
+}
+
+static void fill_sidecar_meta(dump_pcm_file_meta_t *meta) {
+    memset(meta, 0, sizeof(*meta));
+    snprintf(meta->key1, sizeof(meta->key1), "out_primary");
+    snprintf(meta->key2, sizeof(meta->key2), "music");
+    meta->generation = 1;
+    meta->split_index = 0;
+    meta->format.sample_rate = 48000;
+    meta->format.channel_count = 2;
+    meta->format.bits_per_sample = 16;
+    meta->format.sample_format = DUMP_PCM_FORMAT_S16_LE;
+    meta->start_time_unix_ms = 1776397812123ULL;
+}
+
+static void test_sidecar_write_meta_file(void) {
+    const char *name = "sidecar write meta file";
+    const char *why = NULL;
+    dump_pcm_file_meta_t meta;
+    char pcm_path[512];
+    char json_path[512];
+    char buf[2048];
+    int n = 0;
+
+    reset_test_dir();
+    snprintf(pcm_path, sizeof(pcm_path), "%ssidecar_case.pcm", file_mgr_get_root_dir());
+    snprintf(json_path, sizeof(json_path), "%ssidecar_case.json", file_mgr_get_root_dir());
+    fill_sidecar_meta(&meta);
+
+    if (dump_pcm_set_metadata_enabled(1) != 0 || !sidecar_is_enabled()) {
+        why = "public switch did not enable sidecar";
+        goto done;
+    }
+    if (sidecar_write_meta(pcm_path, &meta, true, 1024, sidecar_now_unix_ms()) != 0) {
+        why = "complete write failed";
+        goto done;
+    }
+
+    n = read_file(json_path, buf, sizeof(buf) - 1);
+    if (n <= 0) {
+        why = "complete json not readable";
+        goto done;
+    }
+    buf[n] = '\0';
+    if (strstr(buf, "\"total_bytes\": 1024") == NULL || strstr(buf, "\"complete\": true") == NULL) {
+        why = "complete json content wrong";
+        goto done;
+    }
+
+    if (sidecar_write_meta(pcm_path, &meta, false, 0, 0) != 0) {
+        why = "partial rewrite failed";
+        goto done;
+    }
+
+    n = read_file(json_path, buf, sizeof(buf) - 1);
+    if (n <= 0) {
+        why = "rewritten json not readable";
+        goto done;
+    }
+    buf[n] = '\0';
+    if (strstr(buf, "total_bytes") != NULL || strstr(buf, "\"complete\": false") == NULL) {
+        why = "rewritten json was not overwritten";
+        goto done;
+    }
+
+done:
+    remove(json_path);
+    sidecar_set_enabled(0);
+    if (why != NULL) {
+        fail(name, why);
+        return;
+    }
+    pass(name);
+}
+
+static void test_sidecar_switch_state(void) {
+    const char *name = "sidecar switch state";
+
+    sidecar_set_enabled(1);
+    if (!sidecar_is_enabled()) {
+        fail(name, "enable did not stick");
+        return;
+    }
+    sidecar_set_enabled(0);
+    if (sidecar_is_enabled()) {
+        fail(name, "disable did not stick");
+        return;
+    }
+    if (dump_pcm_set_metadata_enabled(1) != 0 || !sidecar_is_enabled()) {
+        fail(name, "public switch did not enable");
+        return;
+    }
+    if (dump_pcm_set_metadata_enabled(0) != 0 || sidecar_is_enabled()) {
+        fail(name, "public switch did not disable");
+        return;
+    }
+
+    pass(name);
+}
+
+static void test_sidecar_write_file_failure(void) {
+    const char *name = "sidecar write file failure";
+
+    if (sidecar_write_file("/proc/nonexistent/x.json", "{}", 2) != -1) {
+        fail(name, "unwritable directory accepted");
+        return;
+    }
+
+    pass(name);
+}
+
+static void test_sidecar_lifecycle_on_real_file(void) {
+    const char *name = "sidecar lifecycle on real file";
+    const char *why = NULL;
+    dump_pcm_format_t fmt = {48000, 2, 16, DUMP_PCM_FORMAT_S16_LE};
+    char files[4][512] = {{0}};
+    char json_path[512] = {0};
+    char json[2048];
+    uint64_t pcm_size = 0;
+    uint64_t total_bytes = 0;
+    uint64_t sample_rate = 0;
+    int n = 0;
+
+    reset_test_dir();
+    if (dump_pcm_set_metadata_enabled(1) != 0 || !sidecar_is_enabled()) {
+        why = "switch did not enable sidecar";
+        goto done;
+    }
+
+    dump_pcm_data_write_ex("abcd", 4, "life", "cycle", &fmt);
+    stop_and_wait("life", "cycle");
+
+    if (find_pcm_files(files, 4) != 1) {
+        why = "expected exactly one pcm file";
+        goto done;
+    }
+    json_path_for_pcm(files[0], json_path, sizeof(json_path));
+    if (!wait_for_sidecar(json_path, 2000)) {
+        why = "sidecar missing after close";
+        goto done;
+    }
+    if (file_size(files[0], &pcm_size) != 0) {
+        why = "pcm size unavailable";
+        goto done;
+    }
+
+    n = read_file(json_path, json, sizeof(json) - 1);
+    if (n <= 0) {
+        why = "sidecar unreadable";
+        goto done;
+    }
+    json[n] = '\0';
+
+    if (strstr(json, "\"complete\": true") == NULL) {
+        why = "sidecar not marked complete";
+        goto done;
+    }
+    if (!json_uint_field(json, "total_bytes", &total_bytes)) {
+        why = "total_bytes missing";
+        goto done;
+    }
+    if (total_bytes != pcm_size) {
+        why = "total_bytes does not match pcm size";
+        goto done;
+    }
+    if (!json_uint_field(json, "sample_rate", &sample_rate) || sample_rate != 48000) {
+        why = "sample_rate wrong";
+        goto done;
+    }
+
+done:
+    remove(json_path);
+    dump_pcm_set_metadata_enabled(0);
+    remove_case_artifacts();
+    if (why != NULL) {
+        fail(name, why);
+        return;
+    }
+    pass(name);
+}
+
+static void test_sidecar_legacy_write_leaves_no_sidecar(void) {
+    const char *name = "legacy write leaves no sidecar";
+    const char *why = NULL;
+
+    reset_test_dir();
+    if (dump_pcm_set_metadata_enabled(1) != 0 || !sidecar_is_enabled()) {
+        why = "switch did not enable sidecar";
+        goto done;
+    }
+
+    dump_pcm_data_write("legacy", 6, "legacy", "nosidecar");
+    stop_and_wait("legacy", "nosidecar");
+
+    if (count_pcm_files() != 1) {
+        why = "expected exactly one pcm file";
+        goto done;
+    }
+    if (count_json_files() != 0) {
+        why = "legacy write produced a sidecar";
+        goto done;
+    }
+
+done:
+    dump_pcm_set_metadata_enabled(0);
+    remove_case_artifacts();
+    if (why != NULL) {
+        fail(name, why);
+        return;
+    }
+    pass(name);
+}
+
+static void test_sidecar_disabled_metadata_leaves_no_sidecar(void) {
+    const char *name = "disabled metadata leaves no sidecar";
+    const char *why = NULL;
+    dump_pcm_format_t fmt = {48000, 2, 16, DUMP_PCM_FORMAT_S16_LE};
+
+    reset_test_dir();
+    dump_pcm_set_metadata_enabled(0);
+    if (sidecar_is_enabled()) {
+        why = "switch did not disable sidecar";
+        goto done;
+    }
+
+    dump_pcm_data_write_ex("off", 3, "off", "sidecar", &fmt);
+    stop_and_wait("off", "sidecar");
+
+    if (count_pcm_files() != 1) {
+        why = "expected exactly one pcm file";
+        goto done;
+    }
+    if (count_json_files() != 0) {
+        why = "disabled metadata produced a sidecar";
+        goto done;
+    }
+
+done:
+    dump_pcm_set_metadata_enabled(0);
+    remove_case_artifacts();
+    if (why != NULL) {
+        fail(name, why);
+        return;
+    }
     pass(name);
 }
 
@@ -2911,6 +3248,12 @@ int main(void) {
     test_write_ex_without_format_matches_legacy();
     test_sidecar_utf8_validation();
     test_sidecar_json_builder();
+    test_sidecar_write_meta_file();
+    test_sidecar_switch_state();
+    test_sidecar_write_file_failure();
+    test_sidecar_lifecycle_on_real_file();
+    test_sidecar_legacy_write_leaves_no_sidecar();
+    test_sidecar_disabled_metadata_leaves_no_sidecar();
     test_queue_allocation_failures();
     test_session_allocation_failures();
     test_public_write_allocation_failures();

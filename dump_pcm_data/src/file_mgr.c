@@ -11,6 +11,7 @@
 
 #include "key_utils.h"
 #include "logger.h"
+#include "session.h"
 
 static char g_root_dir[256] = DUMP_ROOT_DIR;
 static dump_fwrite_fn_t g_dump_fwrite_fn = fwrite;
@@ -135,6 +136,53 @@ static void generate_filename(const char *key1, const char *key2, uint32_t gener
              stable_hash, generation, split_index, ts);
 }
 
+static file_info_t *find_slot_by_fp(file_manager_t *mgr, FILE *fp) {
+    if (mgr == NULL || fp == NULL) {
+        return NULL;
+    }
+
+    for (uint32_t i = 0; i < MAX_OPEN_FILES; ++i) {
+        if (mgr->files[i].in_use && mgr->files[i].fp == fp) {
+            return &mgr->files[i];
+        }
+    }
+
+    return NULL;
+}
+
+/* Called just before a slot is released, whatever the reason: explicit close,
+ * rollover, size split, LRU eviction or module teardown. The slot still holds
+ * its path, size and metadata copy, so the final version is self-contained. */
+static void finalize_slot_meta(file_info_t *slot) {
+    if (slot == NULL || !slot->has_meta) {
+        return;
+    }
+
+    /* Deliberately not gated on the switch: a file that started with a sidecar
+     * must finish its lifecycle even if metadata was disabled meanwhile. */
+    if (sidecar_write_meta(slot->path, &slot->meta, true, slot->size, sidecar_now_unix_ms()) != 0) {
+        LOGW("Failed to finalize sidecar: %s", slot->path);
+    }
+}
+
+/* Closes a slot's stream and reports whether the data is safely on disk. A
+ * failed fclose means the final size is unknown, so the caller must not mark
+ * the sidecar as complete. */
+static bool close_slot_file(file_info_t *slot) {
+    if (slot == NULL || slot->fp == NULL) {
+        return false;
+    }
+
+    if (fclose(slot->fp) != 0) {
+        LOGW("Failed to close file: %s", slot->path);
+        slot->fp = NULL;
+        return false;
+    }
+
+    slot->fp = NULL;
+    return true;
+}
+
 static void close_idle_file_if_needed(file_manager_t *mgr) {
     uint64_t now = now_mono_ns();
     uint64_t stalest_idle_time = 0;
@@ -159,8 +207,9 @@ static void close_idle_file_if_needed(file_manager_t *mgr) {
     }
 
     if (found && mgr->count >= MAX_OPEN_FILES) {
-        fclose(mgr->files[stalest_idx].fp);
-        mgr->files[stalest_idx].fp = NULL;
+        if (close_slot_file(&mgr->files[stalest_idx])) {
+            finalize_slot_meta(&mgr->files[stalest_idx]);
+        }
         mgr->files[stalest_idx].in_use = false;
         mgr->count--;
         LOGI("Closed stalest idle file: %s", mgr->files[stalest_idx].path);
@@ -214,7 +263,9 @@ void file_mgr_destroy(file_manager_t *mgr) {
 
     for (uint32_t i = 0; i < MAX_OPEN_FILES; ++i) {
         if (mgr->files[i].in_use && mgr->files[i].fp != NULL) {
-            fclose(mgr->files[i].fp);
+            if (close_slot_file(&mgr->files[i])) {
+                finalize_slot_meta(&mgr->files[i]);
+            }
         }
     }
 
@@ -266,6 +317,9 @@ FILE *file_mgr_get_handle(file_manager_t *mgr, const char *key1, const char *key
             mgr->files[i].fp = fp;
             mgr->files[i].last_write_time = now_mono_ns();
             mgr->files[i].in_use = true;
+            /* A recycled slot must not inherit the previous file's sidecar. */
+            mgr->files[i].has_meta = false;
+            memset(&mgr->files[i].meta, 0, sizeof(mgr->files[i].meta));
             if (stat(path_buf, &st) == 0) {
                 mgr->files[i].size = (uint64_t)st.st_size;
             }
@@ -311,8 +365,9 @@ int file_mgr_close(file_manager_t *mgr, FILE *fp) {
 
     for (uint32_t i = 0; i < MAX_OPEN_FILES; ++i) {
         if (mgr->files[i].in_use && mgr->files[i].fp == fp) {
-            fclose(fp);
-            mgr->files[i].fp = NULL;
+            if (close_slot_file(&mgr->files[i])) {
+                finalize_slot_meta(&mgr->files[i]);
+            }
             mgr->files[i].in_use = false;
             mgr->count--;
             LOGI("File closed: %s", mgr->files[i].path);
@@ -321,6 +376,27 @@ int file_mgr_close(file_manager_t *mgr, FILE *fp) {
     }
 
     return -1;
+}
+
+void file_mgr_attach_meta(file_manager_t *mgr, FILE *fp, const dump_pcm_file_meta_t *meta,
+                          bool write_initial) {
+    file_info_t *slot = find_slot_by_fp(mgr, fp);
+
+    if (slot == NULL || meta == NULL || !sidecar_is_enabled()) {
+        return;
+    }
+
+    if (!slot->has_meta) {
+        slot->meta = *meta;
+        slot->has_meta = true;
+    }
+    if (!write_initial || !session_format_is_valid(&slot->meta.format)) {
+        return;
+    }
+
+    if (sidecar_write_meta(slot->path, &slot->meta, false, 0, 0) != 0) {
+        LOGW("Failed to write initial sidecar: %s", slot->path);
+    }
 }
 
 bool file_mgr_is_tracking(file_manager_t *mgr, FILE *fp) {

@@ -3,6 +3,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "sidecar.h"
+
 #if defined(DUMP_PCM_PC) || !defined(ANDROID)
 #else
 #include <cutils/properties.h>
@@ -300,6 +302,11 @@ int dump_pcm_set_root_dir(const char *dir) {
     pthread_mutex_unlock(&g_init_mutex);
 
     return rc;
+}
+
+int dump_pcm_set_metadata_enabled(int enabled) {
+    sidecar_set_enabled(enabled);
+    return 0;
 }
 
 #if defined(DUMP_PCM_PC) || !defined(ANDROID)

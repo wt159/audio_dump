@@ -24,6 +24,11 @@ DUMP_PCM_API void dump_pcm_set_enabled(int enabled);
  * initialized; returns -1 and leaves the directory unchanged otherwise. */
 DUMP_PCM_API int dump_pcm_set_root_dir(const char *dir);
 
+/* Enables the JSON metadata sidecar next to each .pcm file. The switch can be
+ * flipped at runtime and only affects files opened after the call. Off by
+ * default. Returns 0 on success. */
+DUMP_PCM_API int dump_pcm_set_metadata_enabled(int enabled);
+
 typedef struct {
     bool enabled;
     bool low_storage_triggered;
