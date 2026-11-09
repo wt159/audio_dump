@@ -1,10 +1,21 @@
 #include "sidecar.h"
 
 #include <stdarg.h>
+#include <stdatomic.h>
 #include <stdio.h>
 #include <string.h>
+#include <time.h>
+
+#if defined(_WIN32)
+#include <windows.h>
+#endif
 
 #include "session.h"
+
+#define SIDECAR_PATH_MAX 1024
+#define SIDECAR_JSON_MAX 4096
+
+static atomic_int g_sidecar_enabled = 0;
 
 typedef struct {
     char *buf;
@@ -206,4 +217,124 @@ int sidecar_build_json(char *buf, size_t size, const char *pcm_file_name,
     }
 
     return w.ok ? (int)w.len : -1;
+}
+
+static const char *sidecar_basename(const char *path) {
+    const char *base = path;
+
+    for (const char *p = path; *p != '\0'; ++p) {
+        if (*p == '/' || *p == '\\') {
+            base = p + 1;
+        }
+    }
+
+    return base;
+}
+
+/* Derives <stem>.json and <stem>.json.tmp from pcm_path. Both platforms accept
+ * '/' here; the Windows API tolerates forward slashes as well. */
+static bool sidecar_build_paths(const char *pcm_path, char *json_path, size_t json_size,
+                                char *tmp_path, size_t tmp_size) {
+    size_t len = 0;
+    size_t stem = 0;
+    const char *base = NULL;
+
+    if (pcm_path == NULL) {
+        return false;
+    }
+
+    len = strlen(pcm_path);
+    if (len == 0 || len + sizeof(".json") > json_size || len + sizeof(".json") + sizeof(".tmp") - 1 > tmp_size) {
+        return false;
+    }
+
+    memcpy(json_path, pcm_path, len + 1);
+    base = sidecar_basename(pcm_path);
+    stem = (size_t)(base - pcm_path);
+    for (size_t i = len; i > stem; --i) {
+        if (json_path[i - 1] == '.') {
+            len = i - 1;
+            break;
+        }
+    }
+
+    memcpy(json_path + len, ".json", sizeof(".json"));
+    memcpy(tmp_path, json_path, len + sizeof(".json"));
+    memcpy(tmp_path + len + sizeof(".json") - 1, ".tmp", sizeof(".tmp"));
+    return true;
+}
+
+bool sidecar_set_enabled(int enabled) {
+    atomic_store(&g_sidecar_enabled, enabled != 0 ? 1 : 0);
+    return atomic_load(&g_sidecar_enabled) != 0;
+}
+
+bool sidecar_is_enabled(void) {
+    return atomic_load(&g_sidecar_enabled) != 0;
+}
+
+uint64_t sidecar_now_unix_ms(void) {
+    struct timespec ts;
+
+    if (clock_gettime(CLOCK_REALTIME, &ts) != 0) {
+        return 0;
+    }
+
+    return (uint64_t)ts.tv_sec * 1000ULL + (uint64_t)ts.tv_nsec / 1000000ULL;
+}
+
+int sidecar_write_file(const char *pcm_path, const char *json, size_t json_len) {
+    char json_path[SIDECAR_PATH_MAX];
+    char tmp_path[SIDECAR_PATH_MAX];
+    FILE *fp = NULL;
+
+    if (json == NULL || !sidecar_build_paths(pcm_path, json_path, sizeof(json_path), tmp_path, sizeof(tmp_path))) {
+        return -1;
+    }
+
+    fp = fopen(tmp_path, "wb");
+    if (fp == NULL) {
+        return -1;
+    }
+    if ((json_len > 0 && fwrite(json, 1, json_len, fp) != json_len) || fflush(fp) != 0 || ferror(fp)) {
+        fclose(fp);
+        remove(tmp_path);
+        return -1;
+    }
+    if (fclose(fp) != 0) {
+        remove(tmp_path);
+        return -1;
+    }
+
+#if defined(_WIN32)
+    if (!MoveFileExA(tmp_path, json_path, MOVEFILE_REPLACE_EXISTING)) {
+        remove(tmp_path);
+        return -1;
+    }
+#else
+    if (rename(tmp_path, json_path) != 0) {
+        remove(tmp_path);
+        return -1;
+    }
+#endif
+
+    return 0;
+}
+
+int sidecar_write_meta(const char *pcm_path, const dump_pcm_file_meta_t *meta, bool complete,
+                       uint64_t total_bytes, uint64_t end_time_unix_ms) {
+    char buf[SIDECAR_JSON_MAX];
+    int len = 0;
+
+    if (pcm_path == NULL || meta == NULL) {
+        return -1;
+    }
+
+    len = sidecar_build_json(buf, sizeof(buf), sidecar_basename(pcm_path), meta, complete, total_bytes,
+                             end_time_unix_ms);
+    if (len <= 0) {
+        return -1;
+    }
+
+    return sidecar_write_file(pcm_path, buf, (size_t)len);
 }

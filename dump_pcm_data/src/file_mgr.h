@@ -7,6 +7,7 @@
 #include <stdio.h>
 
 #include "platform_config.h"
+#include "sidecar.h"
 
 typedef struct {
     char path[256];
@@ -14,6 +15,10 @@ typedef struct {
     uint64_t size;
     uint64_t last_write_time;
     bool in_use;
+    /* Self-contained copy so the closing hook never dereferences a session
+     * that may already be gone (LRU eviction is invisible to the writer). */
+    dump_pcm_file_meta_t meta;
+    bool has_meta;
 } file_info_t;
 
 typedef struct {
@@ -28,6 +33,13 @@ FILE *file_mgr_get_handle(file_manager_t *mgr, const char *key1, const char *key
                           char *path_buf, size_t path_buf_size, bool *is_new);
 int file_mgr_write(file_manager_t *mgr, FILE *fp, const char *data, size_t size);
 int file_mgr_close(file_manager_t *mgr, FILE *fp);
+
+/* Copies meta onto the slot that owns fp. write_initial is set for a freshly
+ * created file: it writes the first (incomplete) version immediately. A reopen
+ * passes false so the completed version is not downgraded; closing the file
+ * finalises it in both cases. */
+void file_mgr_attach_meta(file_manager_t *mgr, FILE *fp, const dump_pcm_file_meta_t *meta,
+                          bool write_initial);
 bool file_mgr_is_tracking(file_manager_t *mgr, FILE *fp);
 int file_mgr_cleanup(uint32_t max_files, uint32_t max_days);
 const char *file_mgr_get_root_dir(void);
