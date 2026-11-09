@@ -2395,17 +2395,17 @@ static void test_evicted_file_handle_reopens(void) {
 
     reset_test_dir();
 
-    /* PC config allows two open files. Keep session A idle past
+    /* PC config allows two open files. Keep A and B idle past
      * IDLE_TIMEOUT_SEC, then force a third session so the file manager evicts
      * A's handle behind its back. */
     dump_pcm_data_write("a", 1, "evict", "a");
-    usleep(1050000);
     dump_pcm_data_write("b", 1, "evict", "b");
-    usleep(60000);
+    usleep(1050000);
     dump_pcm_data_write("c", 1, "evict", "c");
     usleep(60000);
 
-    /* Still inside the 2s rollover window: this must land in A's file. */
+    /* Still inside the 2s rollover window. A must reopen its file by evicting
+     * the now-idle B, then append rather than write through a closed stream. */
     dump_pcm_data_write("y", 1, "evict", "a");
     usleep(60000);
 
