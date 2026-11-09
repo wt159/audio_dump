@@ -21,6 +21,7 @@
 #define file_mgr_get_handle file_mgr_get_handle__whitebox
 #define file_mgr_write file_mgr_write__whitebox
 #define file_mgr_close file_mgr_close__whitebox
+#define file_mgr_attach_meta file_mgr_attach_meta__whitebox
 #define file_mgr_is_tracking file_mgr_is_tracking__whitebox
 #define file_mgr_cleanup file_mgr_cleanup__whitebox
 #define file_mgr_set_fwrite_fn_for_test file_mgr_set_fwrite_fn_for_test__whitebox
@@ -32,6 +33,7 @@
 #define dump_pcm_data_write_ex dump_pcm_data_write_ex__whitebox
 #define dump_pcm_data_stop dump_pcm_data_stop__whitebox
 #define dump_pcm_set_enabled dump_pcm_set_enabled__whitebox
+#define dump_pcm_set_metadata_enabled dump_pcm_set_metadata_enabled__whitebox
 #define dump_pcm_set_root_dir dump_pcm_set_root_dir__whitebox
 #define dump_pcm_data_get_status dump_pcm_data_get_status__whitebox
 #define dump_pcm_data_get_active_sessions dump_pcm_data_get_active_sessions__whitebox
