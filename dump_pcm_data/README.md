@@ -7,11 +7,19 @@
 ```text
 dump_pcm_data/
 ├── include/
-│   └── dump_pcm_data.h           # 对外接口与状态查询结构体
+│   └── dump_pcm_data.h           # 对外接口、格式结构与状态查询结构体
 ├── src/
-│   ├── dump_pcm_data.c           # 运行时入口、会话管理、写线程
-│   ├── file_mgr.c                # 文件创建、复用、清理
+│   ├── dump_pcm_data.c           # 运行时入口、开关、根目录、会话创建
+│   ├── dump_control.c            # 初始化、开关判断、存储检查、状态查询
+│   ├── dump_writer.c             # 写线程、rollover / 分片决策
+│   ├── dump_internal.h           # 内部上下文、常量
+│   ├── dump_test_hooks.h         # 仅测试使用的注入点（不安装）
+│   ├── file_mgr.c                # 文件创建、复用、关闭钩子、清理
 │   ├── file_mgr.h
+│   ├── sidecar.c                 # 元数据 JSON 序列化与原子写
+│   ├── sidecar.h
+│   ├── session.c                 # 会话、格式捕获、文件动作决策
+│   ├── session.h
 │   ├── key_utils.h               # key 校验、转义、哈希
 │   ├── logger.c
 │   ├── logger.h
@@ -19,13 +27,16 @@ dump_pcm_data/
 │   ├── platform_config_default.h # Android 默认配置
 │   ├── platform_config_pc.h      # PC 测试配置
 │   ├── queue.c
-│   ├── queue.h
-│   ├── session.c
-│   └── session.h
+│   └── queue.h
 ├── test/
 │   ├── main.c                    # PC 测试入口
-│   └── whitebox.c                # 白盒覆盖补充
+│   ├── whitebox.c                # 白盒覆盖补充
+│   ├── check_header_contract.sh  # 公开头契约
+│   ├── check_shared_library_exports.sh
+│   ├── check_verification_flow.sh
+│   └── check_docs_build_contract.sh
 ├── Android.mk                    # Android 编译文件
+├── CMakeLists.txt                # CMake 静态库，可 opt-in 观测接口
 ├── Makefile                      # PC 编译 / 运行 / 覆盖率
 └── .gitignore
 ```
@@ -35,10 +46,24 @@ dump_pcm_data/
 头文件：`include/dump_pcm_data.h`
 
 ```c
+/* 写入：沿用旧接口，不携带格式 */
 void dump_pcm_data_write(const char *buffer, uint32_t buffer_size,
                          const char *key1, const char *key2);
+
+/* 写入并携带采样格式；format 为 NULL 时与旧接口完全等价 */
+void dump_pcm_data_write_ex(const char *buffer, uint32_t buffer_size,
+                            const char *key1, const char *key2,
+                            const dump_pcm_format_t *format);
+
 void dump_pcm_data_stop(const char *key1, const char *key2);
 
+/* 运行时控制 */
+void dump_pcm_set_enabled(int enabled);          /* 1 开 / 0 关 / -1 回落平台默认 */
+int  dump_pcm_set_root_dir(const char *dir);     /* 初始化前调用，成功返回 0 */
+int  dump_pcm_set_metadata_enabled(int enabled); /* sidecar 开关，默认关闭 */
+
+/* 观测接口：默认构建不导出，需定义 DUMP_PCM_INTERNAL_DEBUG_API
+ * 或 DUMP_PCM_DESKTOP_OBSERVE */
 int dump_pcm_data_get_status(dump_status_t *status);
 int dump_pcm_data_get_active_sessions(dump_session_info_t *sessions,
                                       int max_count, int *actual_count);
@@ -52,11 +77,40 @@ int dump_pcm_data_get_active_sessions(dump_session_info_t *sessions,
 | `buffer_size` | 数据大小，单位字节 |
 | `key1` | 会话主标识，必须是合法非空字符串，最大 64 字节 |
 | `key2` | 会话次标识，必须是合法非空字符串，最大 64 字节 |
+| `format` | 采样格式；仅在会话首包生效，`NULL` 表示未知 |
+
+### 格式结构
+
+```c
+typedef enum {
+    DUMP_PCM_FORMAT_UNKNOWN = 0,
+    DUMP_PCM_FORMAT_S16_LE,
+    DUMP_PCM_FORMAT_S24_LE,   /* 24 bit，装在 32 bit 容器里 */
+    DUMP_PCM_FORMAT_S24_3LE,  /* 紧密排列的 3 字节 */
+    DUMP_PCM_FORMAT_S32_LE,
+    DUMP_PCM_FORMAT_FLOAT_LE
+} dump_pcm_sample_format_t;
+
+typedef struct {
+    uint32_t sample_rate;      /* 8000 – 384000 */
+    uint16_t channel_count;    /* 1 – 8 */
+    uint16_t bits_per_sample;  /* 与 sample_format 自洽 */
+    dump_pcm_sample_format_t sample_format;
+} dump_pcm_format_t;
+```
+
+校验不通过或传 `NULL` 时，格式被视为未知：不影响写入，只是不生成 sidecar。
+
+### 运行时控制
+
+- `dump_pcm_set_enabled()` 是 push 式开关，优先级高于 Android 属性 / PC 环境变量；传 `-1` 回落到平台默认源。由关变开时会清除低存储锁存。
+- `dump_pcm_set_root_dir()` 必须在模块初始化前调用，已初始化时返回 `-1` 且不改变目录。Windows 下反斜杠会被归一化为 `/`。
+- `dump_pcm_set_metadata_enabled()` 可在运行中切换，判定发生在文件打开时：开启后新打开的文件有 sidecar，已打开的不补写。
 
 ### 状态查询
 
 - `dump_pcm_data_get_status()` 返回 dump 是否开启、低存储锁存状态、缓存的可用空间、队列积压数量和活跃会话数。
-- `dump_pcm_data_get_active_sessions()` 返回当前活跃会话的 `key1/key2` 和已写入字节数。
+- `dump_pcm_data_get_active_sessions()` 返回当前活跃会话的 `key1/key2`、已写入字节数，以及首包捕获到的格式（`has_format` / `format`）。
 
 ## 运行时行为
 
@@ -64,6 +118,7 @@ int dump_pcm_data_get_active_sessions(dump_session_info_t *sessions,
 
 - Android 通过属性 `vendor.audio.dump` 控制，值为 `1` 时开启。
 - PC 测试通过环境变量 `AUDIO_DUMP_ENABLED=1` 控制。
+- 两者都可以被 `dump_pcm_set_enabled()` 覆盖：`1` 强制开、`0` 强制关、`-1` 退回属性 / 环境变量。
 - dump 从关闭切回开启时，会清除低存储锁存状态。
 
 ### 落盘目录
@@ -71,6 +126,7 @@ int dump_pcm_data_get_active_sessions(dump_session_info_t *sessions,
 - Android 默认目录：`/data/vendor/audio/`
 - PC 默认目录：`/tmp/audio_dump_test/`
 - PC 测试程序支持用 `AUDIO_DUMP_DIR` 覆盖输出目录。
+- 宿主可在初始化前调用 `dump_pcm_set_root_dir()` 指定任意目录；目录不存在时会逐级创建。
 
 ### 会话生命周期
 
@@ -95,7 +151,7 @@ int dump_pcm_data_get_active_sessions(dump_session_info_t *sessions,
 ### 文件切分与清理
 
 - 单文件大小上限为 `1 GiB`，超过后会在同一会话内递增 `split-index` 新建分片文件。
-- 初始化时会执行一次历史文件清理：仅当 `.pcm` 文件总数超过 `100` 时，删除超过 `7` 天的旧文件。
+- 写线程首次拿到 block 时执行一次历史文件清理（不在调用线程做）：仅当 `.pcm` 文件总数超过 `100` 时，删除超过 `7` 天的旧文件；只匹配 `.pcm` 后缀，宿主自己的 `mix.pcm.bak` 之类不会被误删。
 
 ## 文件名格式
 
@@ -132,6 +188,10 @@ make coverage
 
 # 手工运行
 AUDIO_DUMP_ENABLED=1 AUDIO_DUMP_DIR=/tmp/audio_dump_test ./dump_pcm_test
+
+# CMake 静态库（-DDUMP_PCM_DESKTOP_OBSERVE=ON 会导出观测接口）
+cmake -S . -B build/cmake -DDUMP_PCM_DESKTOP_OBSERVE=ON
+cmake --build build/cmake
 ```
 
 说明：
@@ -170,6 +230,11 @@ mm
    dump_pcm_data_stop(key1, key2);
    ```
 
+> HAL 的以上调用方式不需要改动。若确实需要元数据 sidecar，可把第 2 步换成
+> `dump_pcm_data_write_ex()` 并传入 `stream->config` 中的采样率、声道、位深与格式，
+> 同时调用 `dump_pcm_set_metadata_enabled(1)`。不开启时不会产生任何 `.json`，
+> 旧调用的字节输出也完全不变。
+
 ## Android 使用示例
 
 ```bash
@@ -189,3 +254,27 @@ adb shell ls -la /data/vendor/audio/
 - 同一组 `key1 + key2` 连续写入，但相邻两次调用间隔 `> 2` 秒时，后一次写入会创建新的 `generation`，因此落到新的 `.pcm` 文件。
 - 显式调用 `dump_pcm_data_stop(key1, key2)` 后，后续同 key 的下一次写入会创建新的 `.pcm` 文件。
 - 如果 key 在转义后发生同名碰撞，文件名中的稳定哈希会继续把它们区分开。
+
+## 元数据 sidecar
+
+默认关闭。开启后，每个 `.pcm` 文件旁边会有一个同名 `.json`：
+
+```text
+out_primary_music_5f2a1c3d_1_0_20260417_103012_123.pcm
+out_primary_music_5f2a1c3d_1_0_20260417_103012_123.json
+```
+
+生成需要同时满足三个条件：
+
+1. `dump_pcm_set_metadata_enabled(1)` 已开启；
+2. 文件打开时开关处于开启状态（已打开的文件不补写）；
+3. 该会话首包通过 `dump_pcm_data_write_ex()` 携带了合法格式。
+
+行为要点：
+
+- 文件创建时写首版（`complete: false`，没有 `total_bytes`）；关闭时补全 `total_bytes` / `end_time_unix_ms` 并置 `complete: true`。
+- "关闭"覆盖显式 stop、2 秒 rollover、1 GiB 分片、句柄 LRU 回收和模块销毁。
+- 进程被强杀时保留首版，`complete: false` 可让分析工具判断该文件不完整。
+- 写入采用 `<name>.json.tmp` + rename 的原子替换；失败只记 WARN，不影响 `.pcm`。
+- 旧接口不携带格式，因此不会产生任何 `.json`。
+- 完整字段与失败矩阵见 [`docs/d4-sidecar-design.md`](../docs/d4-sidecar-design.md)。
