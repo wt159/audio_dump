@@ -37,6 +37,8 @@ typedef struct {
     uint32_t generation;
     uint32_t split_index;
     uint32_t pending_blocks;
+    bool has_format;
+    dump_pcm_format_t format;
 } session_info_t;
 
 typedef struct {
@@ -61,5 +63,9 @@ uint32_t session_live_count(session_manager_t *mgr);
  * reached, and writing through it would touch a closed FILE*. */
 session_file_action_t session_file_action(const session_info_t *session, bool handle_tracked,
                                           uint64_t size_limit);
+
+/* Format validation is pure; a session keeps the first valid format it sees. */
+bool session_format_is_valid(const dump_pcm_format_t *format);
+void session_capture_format(session_info_t *session, const dump_pcm_format_t *format);
 
 #endif

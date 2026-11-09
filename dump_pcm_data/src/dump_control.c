@@ -196,6 +196,8 @@ int dump_pcm_data_get_active_sessions(dump_session_info_t *sessions, int max_cou
             dump_key_copy(sessions[*actual_count].key1, session->key1);
             dump_key_copy(sessions[*actual_count].key2, session->key2);
             sessions[*actual_count].written_bytes = session->file_size;
+            sessions[*actual_count].has_format = session->has_format;
+            sessions[*actual_count].format = session->format;
             (*actual_count)++;
         }
     }

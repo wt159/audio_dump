@@ -1208,6 +1208,123 @@ static void test_session_file_action_policy(void) {
     pass(name);
 }
 
+static void test_format_validation(void) {
+    const char *name = "pcm format validation";
+    dump_pcm_format_t fmt = {48000, 2, 16, DUMP_PCM_FORMAT_S16_LE};
+
+    if (!session_format_is_valid(&fmt) || session_format_is_valid(NULL)) {
+        fail(name, "baseline validity wrong");
+        return;
+    }
+
+    fmt.bits_per_sample = 24;
+    if (session_format_is_valid(&fmt)) {
+        fail(name, "mismatched bit depth accepted");
+        return;
+    }
+
+    fmt.bits_per_sample = 16;
+    fmt.channel_count = 0;
+    if (session_format_is_valid(&fmt)) {
+        fail(name, "zero channels accepted");
+        return;
+    }
+
+    fmt.channel_count = 2;
+    fmt.sample_rate = 7999;
+    if (session_format_is_valid(&fmt)) {
+        fail(name, "out-of-range rate accepted");
+        return;
+    }
+
+    fmt.sample_rate = 48000;
+    fmt.sample_format = DUMP_PCM_FORMAT_UNKNOWN;
+    if (session_format_is_valid(&fmt)) {
+        fail(name, "unknown format accepted");
+        return;
+    }
+
+    fmt.sample_format = DUMP_PCM_FORMAT_FLOAT_LE;
+    fmt.bits_per_sample = 32;
+    if (!session_format_is_valid(&fmt)) {
+        fail(name, "valid float format rejected");
+        return;
+    }
+
+    pass(name);
+}
+
+static void test_write_ex_captures_first_format(void) {
+    const char *name = "write_ex captures the first format";
+    dump_pcm_format_t first = {48000, 2, 16, DUMP_PCM_FORMAT_S16_LE};
+    dump_pcm_format_t second = {44100, 1, 24, DUMP_PCM_FORMAT_S24_LE};
+    dump_session_info_t sessions[4] = {{0}};
+    int count = 0;
+    int idx = -1;
+
+    reset_test_dir();
+    dump_pcm_data_write_ex("ab", 2, "fmt", "cap", &first);
+    dump_pcm_data_write_ex("cd", 2, "fmt", "cap", &second);
+    usleep(120000);
+
+    if (dump_pcm_data_get_active_sessions(sessions, 4, &count) != 0) {
+        fail(name, "session query failed");
+        return;
+    }
+    for (int i = 0; i < count; ++i) {
+        if (strcmp(sessions[i].key1, "fmt") == 0 && strcmp(sessions[i].key2, "cap") == 0) {
+            idx = i;
+        }
+    }
+    if (idx < 0) {
+        fail(name, "session missing");
+        return;
+    }
+    if (!sessions[idx].has_format || sessions[idx].format.sample_rate != 48000 ||
+        sessions[idx].format.channel_count != 2 ||
+        sessions[idx].format.sample_format != DUMP_PCM_FORMAT_S16_LE) {
+        stop_and_wait("fmt", "cap");
+        fail(name, "first format was not kept");
+        return;
+    }
+
+    stop_and_wait("fmt", "cap");
+    pass(name);
+}
+
+static void test_write_ex_without_format_matches_legacy(void) {
+    const char *name = "write_ex without format matches legacy";
+    char files[4][512] = {{0}};
+    char legacy[8] = {0};
+    char via_ex[8] = {0};
+    int count = 0;
+
+    reset_test_dir();
+    dump_pcm_data_write("abc", 3, "eq", "legacy");
+    stop_and_wait("eq", "legacy");
+    count = find_pcm_files(files, 4);
+    if (count != 1 || read_file(files[0], legacy, sizeof(legacy)) != 3) {
+        fail(name, "legacy write produced unexpected output");
+        return;
+    }
+
+    reset_test_dir();
+    dump_pcm_data_write_ex("abc", 3, "eq", "ex", NULL);
+    stop_and_wait("eq", "ex");
+    count = find_pcm_files(files, 4);
+    if (count != 1 || read_file(files[0], via_ex, sizeof(via_ex)) != 3) {
+        fail(name, "write_ex produced unexpected output");
+        return;
+    }
+
+    if (memcmp(legacy, via_ex, 3) != 0) {
+        fail(name, "byte content differs");
+        return;
+    }
+
+    pass(name);
+}
+
 static void test_queue_allocation_failures(void) {
     const char *name = "queue allocation failures";
     queue_t queue;
@@ -2701,6 +2818,9 @@ int main(void) {
     test_session_direct();
     test_session_highest_generation_lookup();
     test_session_file_action_policy();
+    test_format_validation();
+    test_write_ex_captures_first_format();
+    test_write_ex_without_format_matches_legacy();
     test_queue_allocation_failures();
     test_session_allocation_failures();
     test_public_write_allocation_failures();
