@@ -1,6 +1,7 @@
 #include "dump_internal.h"
 
 #include <stdlib.h>
+#include <string.h>
 
 #if defined(DUMP_PCM_PC) || !defined(ANDROID)
 #else
@@ -14,6 +15,7 @@ dump_context_t g_ctx = {0};
 pthread_mutex_t g_init_mutex = PTHREAD_MUTEX_INITIALIZER;
 pthread_cond_t g_init_cond = PTHREAD_COND_INITIALIZER;
 _Atomic int g_init_state = DUMP_INIT_UNINITIALIZED;
+atomic_int g_enabled_override = -1;
 uint64_t g_last_init_fail_ms = 0;
 pthread_mutex_t g_storage_mutex = PTHREAD_MUTEX_INITIALIZER;
 dump_storage_query_fn_t g_dump_storage_query_fn = NULL;
@@ -262,6 +264,27 @@ void dump_pcm_data_stop(const char *key1, const char *key2) {
         stop_session_locked(session);
     }
     pthread_mutex_unlock(&g_ctx.mutex);
+}
+
+void dump_pcm_set_enabled(int enabled) {
+    if (enabled < 0) {
+        atomic_store(&g_enabled_override, -1);
+        return;
+    }
+
+    atomic_store(&g_enabled_override, enabled != 0 ? 1 : 0);
+}
+
+int dump_pcm_set_root_dir(const char *dir) {
+    if (dir == NULL || dir[0] == '\0' || strlen(dir) >= 255) {
+        return -1;
+    }
+    if (atomic_load(&g_init_state) != DUMP_INIT_UNINITIALIZED) {
+        return -1;
+    }
+
+    file_mgr_set_root_dir(dir);
+    return 0;
 }
 
 #if defined(DUMP_PCM_PC) || !defined(ANDROID)

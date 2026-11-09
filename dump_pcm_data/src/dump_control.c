@@ -129,26 +129,23 @@ int check_storage(void) {
 
 int check_enabled(void) {
     int was_enabled = atomic_load(&g_ctx.enabled);
+    int override = atomic_load(&g_enabled_override);
+    int on = 0;
 
+    if (override >= 0) {
+        on = (override == 1);
+    } else {
 #if defined(DUMP_PCM_PC) || !defined(ANDROID)
-    const char *env = getenv(PROPERTY_NAME);
-    if (env != NULL && atoi(env) == 1) {
-        atomic_store(&g_ctx.enabled, 1);
-        if (!was_enabled) {
-            atomic_store(&g_ctx.low_storage_triggered, 0);
-            LOGI("Dump enabled");
-        }
-        return 0;
-    }
-    atomic_store(&g_ctx.enabled, 0);
-    if (was_enabled) {
-        LOGI("Dump disabled");
-    }
-    return -1;
+        const char *env = getenv(PROPERTY_NAME);
+        on = (env != NULL && atoi(env) == 1);
 #else
-    char value[PROPERTY_VALUE_MAX];
-    property_get(PROPERTY_NAME, value, "0");
-    if (strcmp(value, "1") == 0) {
+        char value[PROPERTY_VALUE_MAX];
+        property_get(PROPERTY_NAME, value, "0");
+        on = (strcmp(value, "1") == 0);
+#endif
+    }
+
+    if (on) {
         atomic_store(&g_ctx.enabled, 1);
         if (!was_enabled) {
             atomic_store(&g_ctx.low_storage_triggered, 0);
@@ -156,12 +153,12 @@ int check_enabled(void) {
         }
         return 0;
     }
+
     atomic_store(&g_ctx.enabled, 0);
     if (was_enabled) {
         LOGI("Dump disabled");
     }
     return -1;
-#endif
 }
 
 int dump_pcm_data_get_status(dump_status_t *status) {

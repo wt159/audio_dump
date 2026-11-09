@@ -68,25 +68,38 @@ static int ensure_dir_exists(const char *path) {
         tmp[len - 1] = '\0';
     }
 
-    for (char *p = tmp + 1; *p != '\0'; ++p) {
-        struct stat st = {0};
-        if (*p != '/') {
-            continue;
-        }
+    {
+        char *scan = tmp + 1;
 
-        *p = '\0';
-        if (stat(tmp, &st) == 0) {
-            if (!S_ISDIR(st.st_mode)) {
-                LOGE("Path exists but not a directory: %s", tmp);
+#if defined(_WIN32)
+        /* Skip the "C:" drive prefix: it must never be stat'ed or created. */
+        if (len >= 3 &&
+            ((tmp[0] >= 'A' && tmp[0] <= 'Z') || (tmp[0] >= 'a' && tmp[0] <= 'z')) &&
+            tmp[1] == ':' && tmp[2] == '/') {
+            scan = tmp + 3;
+        }
+#endif
+
+        for (char *p = scan; *p != '\0'; ++p) {
+            struct stat st = {0};
+            if (*p != '/') {
+                continue;
+            }
+
+            *p = '\0';
+            if (stat(tmp, &st) == 0) {
+                if (!S_ISDIR(st.st_mode)) {
+                    LOGE("Path exists but not a directory: %s", tmp);
+                    *p = '/';
+                    return -1;
+                }
+            } else if (DUMP_MKDIR(tmp, 0755) != 0 && errno != EEXIST) {
+                LOGE("Failed to create directory: %s, errno=%d", tmp, errno);
                 *p = '/';
                 return -1;
             }
-        } else if (DUMP_MKDIR(tmp, 0755) != 0 && errno != EEXIST) {
-            LOGE("Failed to create directory: %s, errno=%d", tmp, errno);
             *p = '/';
-            return -1;
         }
-        *p = '/';
     }
 
     {
@@ -167,6 +180,17 @@ void file_mgr_set_root_dir(const char *dir) {
 
     strncpy(g_root_dir, dir, sizeof(g_root_dir) - 1);
     g_root_dir[sizeof(g_root_dir) - 1] = '\0';
+#if defined(_WIN32)
+    {
+        char *p = g_root_dir;
+
+        for (; *p != '\0'; ++p) {
+            if (*p == '\\') {
+                *p = '/';
+            }
+        }
+    }
+#endif
     len = strlen(g_root_dir);
     if (len > 0 && g_root_dir[len - 1] != '/') {
         g_root_dir[len] = '/';

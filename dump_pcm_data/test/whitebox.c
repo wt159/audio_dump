@@ -30,6 +30,8 @@
 
 #define dump_pcm_data_write dump_pcm_data_write__whitebox
 #define dump_pcm_data_stop dump_pcm_data_stop__whitebox
+#define dump_pcm_set_enabled dump_pcm_set_enabled__whitebox
+#define dump_pcm_set_root_dir dump_pcm_set_root_dir__whitebox
 #define dump_pcm_data_get_status dump_pcm_data_get_status__whitebox
 #define dump_pcm_data_get_active_sessions dump_pcm_data_get_active_sessions__whitebox
 #define dump_pcm_set_time_ms_fn_for_test dump_pcm_set_time_ms_fn_for_test__whitebox
@@ -42,6 +44,7 @@
 #define g_init_mutex g_init_mutex__whitebox
 #define g_init_cond g_init_cond__whitebox
 #define g_init_state g_init_state__whitebox
+#define g_enabled_override g_enabled_override__whitebox
 #define g_last_init_fail_ms g_last_init_fail_ms__whitebox
 #define g_storage_mutex g_storage_mutex__whitebox
 #define g_dump_storage_query_fn g_dump_storage_query_fn__whitebox
