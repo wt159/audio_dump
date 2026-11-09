@@ -87,6 +87,13 @@ void *writer_thread_func(void *arg) {
         if (session != NULL) {
             bool is_new = false;
 
+            /* The file manager closes the stalest handle when MAX_OPEN_FILES is
+             * reached, without telling the owning session. Reopen instead of
+             * writing through a closed FILE*. */
+            if (session->fp != NULL && !file_mgr_is_tracking(&g_ctx.file_mgr, session->fp)) {
+                session->fp = NULL;
+            }
+
             if (session->fp != NULL && session->file_size >= get_file_size_limit_bytes()) {
                 if (file_mgr_is_tracking(&g_ctx.file_mgr, session->fp)) {
                     file_mgr_close(&g_ctx.file_mgr, session->fp);

@@ -2386,6 +2386,57 @@ static void test_init_retry_path(void) {
     pass(name);
 }
 
+static void test_evicted_file_handle_reopens(void) {
+    const char *name = "evicted file handle reopens same file";
+    char files[8][512] = {{0}};
+    char content[16] = {0};
+    int count = 0;
+    bool found = false;
+
+    reset_test_dir();
+
+    /* PC config allows two open files. Keep session A idle past
+     * IDLE_TIMEOUT_SEC, then force a third session so the file manager evicts
+     * A's handle behind its back. */
+    dump_pcm_data_write("a", 1, "evict", "a");
+    usleep(1050000);
+    dump_pcm_data_write("b", 1, "evict", "b");
+    usleep(60000);
+    dump_pcm_data_write("c", 1, "evict", "c");
+    usleep(60000);
+
+    /* Still inside the 2s rollover window: this must land in A's file. */
+    dump_pcm_data_write("y", 1, "evict", "a");
+    usleep(60000);
+
+    stop_and_wait("evict", "a");
+    stop_and_wait("evict", "b");
+    stop_and_wait("evict", "c");
+
+    count = find_pcm_files(files, 8);
+    if (count != 3) {
+        fail(name, "expected three files");
+        return;
+    }
+
+    for (int i = 0; i < count; ++i) {
+        if (strstr(files[i], "evict_a_") != NULL) {
+            found = true;
+            if (read_file(files[i], content, sizeof(content)) != 2 || memcmp(content, "ay", 2) != 0) {
+                fail(name, "reopened file content mismatch");
+                return;
+            }
+        }
+    }
+
+    if (!found) {
+        fail(name, "missing session file");
+        return;
+    }
+
+    pass(name);
+}
+
 static void test_init_failure_path(void) {
     const char *name = "init failure path";
     pid_t pid = fork();
@@ -2680,6 +2731,7 @@ int main(void) {
     test_file_manager_direct();
     test_file_manager_reuses_tracked_handle();
     test_file_manager_closes_fp_when_no_free_slot();
+    test_evicted_file_handle_reopens();
     test_file_manager_idle_scan_skips_inactive_slots();
     test_file_manager_rejects_when_full_and_no_idle_slot();
     test_file_manager_close_rejects_foreign_handle();
