@@ -278,7 +278,7 @@ G-01 属于既有缺陷，与本方案无关，但不修它后续所有 PR 都�
 | PR0 | 基线修复 G-01 | 修正 `check_docs_build_contract.sh` 文档路径 | ✅ 已合并；CI `pc-verify` 三件套通过 |
 | PR1 | D-01 时钟统一 + D-02 开关门控 + D-03 I/O 下沉 + C3 语义 | 实现 + T-01/T-02/T-03 + 既有 failpoint 用例拆分 | ✅ 已合并（PR #3 / #4 / #5） |
 | PR2 | D-06 拆头与存储抽象 + D-07 mkdir 宏 | 实现 + 测试桩迁移 + C2 匹配收紧 + T-06 | ✅ 已合并（PR #7）；MinGW job 转为必过门禁 |
-| PR3 | D-04 开关 + D-05 根目录 + D-09 CMake/MinGW + D-08 观测宏 | 实现 + T-04/T-05/T-07/T-08 + AGENTS.md | 🔧 已实现待 CI |
+| PR3 | D-04 开关 + D-05 根目录 + D-09 CMake/MinGW + D-08 观测宏 | 实现 + T-04/T-05/T-07/T-08 + AGENTS.md | ✅ 已合并（PR #9）；观测接口为 opt-in，默认仍不导出 |
 | 另立项 | D4 元数据 sidecar | 先定义元数据输入契约 | ⏳ |
 
 每个 PR 独立可回滚。PR0 最先合入；PR1 不依赖 Windows/MinGW 环境，但需要 Linux 或 WSL 跑三件套。
