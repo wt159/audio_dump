@@ -2,9 +2,7 @@
 #define DUMP_PCM_DATA_H
 
 #include <stdbool.h>
-#include <pthread.h>
 #include <stdint.h>
-#include <sys/statvfs.h>
 
 #define DUMP_PCM_KEY_MAX_LEN 64
 
@@ -38,17 +36,6 @@ typedef struct {
 #ifdef DUMP_PCM_INTERNAL_DEBUG_API
 int dump_pcm_data_get_status(dump_status_t *status);
 int dump_pcm_data_get_active_sessions(dump_session_info_t *sessions, int max_count, int *actual_count);
-#endif
-
-typedef int (*dump_statvfs_fn_t)(const char *path, struct statvfs *buf);
-typedef int (*dump_pthread_create_fn_t)(pthread_t *thread, const pthread_attr_t *attr,
-                                        void *(*start_routine)(void *), void *arg);
-typedef uint64_t (*dump_time_ms_fn_t)(void);
-
-#if defined(DUMP_PCM_PC) || !defined(ANDROID)
-void dump_pcm_set_statvfs_fn_for_test(dump_statvfs_fn_t fn);
-void dump_pcm_set_pthread_create_fn_for_test(dump_pthread_create_fn_t fn);
-void dump_pcm_set_time_ms_fn_for_test(dump_time_ms_fn_t fn);
 #endif
 
 #endif

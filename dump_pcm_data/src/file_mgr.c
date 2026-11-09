@@ -81,7 +81,7 @@ static int ensure_dir_exists(const char *path) {
                 *p = '/';
                 return -1;
             }
-        } else if (mkdir(tmp, 0755) != 0 && errno != EEXIST) {
+        } else if (DUMP_MKDIR(tmp, 0755) != 0 && errno != EEXIST) {
             LOGE("Failed to create directory: %s, errno=%d", tmp, errno);
             *p = '/';
             return -1;
@@ -100,7 +100,7 @@ static int ensure_dir_exists(const char *path) {
         }
     }
 
-    if (mkdir(tmp, 0755) != 0 && errno != EEXIST) {
+    if (DUMP_MKDIR(tmp, 0755) != 0 && errno != EEXIST) {
         LOGE("Failed to create directory: %s, errno=%d", tmp, errno);
         return -1;
     }
@@ -313,6 +313,20 @@ bool file_mgr_is_tracking(file_manager_t *mgr, FILE *fp) {
     return false;
 }
 
+/* Only our own artifacts take part in the retention policy. A substring match
+ * would also catch host files such as "mix.pcm.bak" once the root directory is
+ * configurable. */
+static bool has_pcm_suffix(const char *name) {
+    size_t len = 0;
+
+    if (name == NULL) {
+        return false;
+    }
+
+    len = strlen(name);
+    return len > 4 && strcmp(name + len - 4, ".pcm") == 0;
+}
+
 int file_mgr_cleanup(uint32_t max_files, uint32_t max_days) {
     DIR *dir = NULL;
     struct dirent *entry = NULL;
@@ -333,7 +347,7 @@ int file_mgr_cleanup(uint32_t max_files, uint32_t max_days) {
         char filepath[512];
         struct stat st = {0};
 
-        if (strstr(entry->d_name, ".pcm") == NULL) {
+        if (!has_pcm_suffix(entry->d_name)) {
             continue;
         }
 

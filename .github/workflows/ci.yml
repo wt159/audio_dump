@@ -40,9 +40,8 @@ jobs:
   mingw-compile:
     name: MinGW cross compile check
     runs-on: ubuntu-latest
-    # Expected to fail until issue #1 B1/B2 are fixed (sys/statvfs.h, mkdir signature).
-    # Drop continue-on-error when the MinGW target lands in PR3.
-    continue-on-error: true
+    # Compile-only gate for the Windows toolchain. Runtime behaviour is still
+    # covered on Linux by the fault-injection tests in dump_pcm_test.
     steps:
       - name: Checkout
         uses: actions/checkout@v4

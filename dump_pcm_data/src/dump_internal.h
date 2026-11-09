@@ -6,12 +6,12 @@
 #include <pthread.h>
 #include <stdatomic.h>
 #include <stdint.h>
-#include <sys/statvfs.h>
 #include <time.h>
 
 #define STORAGE_CHECK_INTERVAL_MS 1000
 #define STORAGE_LOW_THRESHOLD_MB 500
 
+#include "dump_test_hooks.h"
 #include "file_mgr.h"
 #include "key_utils.h"
 #include "logger.h"
@@ -58,7 +58,7 @@ extern pthread_cond_t g_init_cond;
 extern _Atomic int g_init_state;
 extern uint64_t g_last_init_fail_ms;
 extern pthread_mutex_t g_storage_mutex;
-extern dump_statvfs_fn_t g_dump_statvfs_fn;
+extern dump_storage_query_fn_t g_dump_storage_query_fn;
 extern dump_pthread_create_fn_t g_dump_pthread_create_fn;
 
 #if defined(DUMP_PCM_PC) || !defined(ANDROID)

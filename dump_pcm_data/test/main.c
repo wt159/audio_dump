@@ -3,6 +3,7 @@
 #define DUMP_PCM_INTERNAL_DEBUG_API 1
 
 #include "../include/dump_pcm_data.h"
+#include "../src/dump_test_hooks.h"
 #include "../src/file_mgr.h"
 #include "../src/key_utils.h"
 #include "../src/logger.h"
@@ -21,10 +22,6 @@
 #include <utime.h>
 #include <sys/wait.h>
 #include <unistd.h>
-
-#if defined(DUMP_PCM_PC) || !defined(ANDROID)
-void dump_pcm_set_file_size_limit_for_test(uint64_t bytes);
-#endif
 
 int run_whitebox_coverage_shim(void);
 
@@ -54,35 +51,29 @@ static void fail(const char *name, const char *why) {
     tests_failed++;
 }
 
-static int fake_statvfs_fail(const char *path, struct statvfs *buf) {
+static int fake_storage_fail(const char *path, uint64_t *available_bytes) {
     (void)path;
-    (void)buf;
+    (void)available_bytes;
     errno = EIO;
     return -1;
 }
 
-static int fake_statvfs_low(const char *path, struct statvfs *buf) {
+static int fake_storage_low(const char *path, uint64_t *available_bytes) {
     (void)path;
-    memset(buf, 0, sizeof(*buf));
-    buf->f_bavail = 1;
-    buf->f_frsize = 1024 * 1024;
+    *available_bytes = 1ULL * 1024ULL * 1024ULL;
     return 0;
 }
 
-static int fake_statvfs_large(const char *path, struct statvfs *buf) {
+static int fake_storage_large(const char *path, uint64_t *available_bytes) {
     (void)path;
-    memset(buf, 0, sizeof(*buf));
-    buf->f_bavail = 33792;
-    buf->f_frsize = 1024 * 1024;
+    *available_bytes = 33792ULL * 1024ULL * 1024ULL;
     return 0;
 }
 
-static int fake_statvfs_slow(const char *path, struct statvfs *buf) {
+static int fake_storage_slow(const char *path, uint64_t *available_bytes) {
     (void)path;
     usleep(50000);
-    memset(buf, 0, sizeof(*buf));
-    buf->f_bavail = 1024;
-    buf->f_frsize = 1024 * 1024;
+    *available_bytes = 1024ULL * 1024ULL * 1024ULL;
     return 0;
 }
 
@@ -712,9 +703,9 @@ static void test_storage_cache_hits_cached_under_lock(void) {
     usleep(120000);
     stop_and_wait("cache_lock", "same");
     usleep(1100000);
-    dump_pcm_set_statvfs_fn_for_test(fake_statvfs_slow);
+    dump_pcm_set_storage_query_fn_for_test(fake_storage_slow);
     if (pthread_barrier_init(&barrier, NULL, 3) != 0) {
-        dump_pcm_set_statvfs_fn_for_test(NULL);
+        dump_pcm_set_storage_query_fn_for_test(NULL);
         fail(name, "failed to initialize barrier");
         return;
     }
@@ -731,7 +722,7 @@ static void test_storage_cache_hits_cached_under_lock(void) {
     if (pthread_create(&threads[0], NULL, concurrent_dump_write, &args[0]) != 0 ||
         pthread_create(&threads[1], NULL, concurrent_dump_write, &args[1]) != 0) {
         pthread_barrier_destroy(&barrier);
-        dump_pcm_set_statvfs_fn_for_test(NULL);
+        dump_pcm_set_storage_query_fn_for_test(NULL);
         fail(name, "failed to start concurrent writers");
         return;
     }
@@ -740,7 +731,7 @@ static void test_storage_cache_hits_cached_under_lock(void) {
     pthread_join(threads[0], NULL);
     pthread_join(threads[1], NULL);
     pthread_barrier_destroy(&barrier);
-    dump_pcm_set_statvfs_fn_for_test(NULL);
+    dump_pcm_set_storage_query_fn_for_test(NULL);
     usleep(120000);
     stop_and_wait("cache_lock", "same");
 
@@ -1007,8 +998,8 @@ static void test_same_timestamp_rollovers_get_unique_files(void) {
     pass(name);
 }
 
-static void test_statvfs_failure_blocks_new_session(void) {
-    const char *name = "statvfs failure blocks new session";
+static void test_storage_failure_blocks_new_session(void) {
+    const char *name = "storage query failure blocks new session";
     dump_status_t before = {0};
     dump_status_t after = {0};
 
@@ -1016,29 +1007,29 @@ static void test_statvfs_failure_blocks_new_session(void) {
     unsetenv("AUDIO_DUMP_TEST_AVAILABLE_MB");
     usleep(1100000);
     dump_pcm_data_get_status(&before);
-    dump_pcm_set_statvfs_fn_for_test(fake_statvfs_fail);
-    dump_pcm_data_write("s", 1, "statvfs", "fail");
+    dump_pcm_set_storage_query_fn_for_test(fake_storage_fail);
+    dump_pcm_data_write("s", 1, "storage", "fail");
     usleep(60000);
-    dump_pcm_set_statvfs_fn_for_test(NULL);
+    dump_pcm_set_storage_query_fn_for_test(NULL);
     dump_pcm_data_get_status(&after);
 
     if (after.active_session_count != before.active_session_count) {
-        fail(name, "statvfs failure admitted a session");
+        fail(name, "storage query failure admitted a session");
         return;
     }
 
     pass(name);
 }
 
-static void test_statvfs_low_storage_blocks_new_session(void) {
-    const char *name = "statvfs low storage blocks new session";
+static void test_storage_low_storage_blocks_new_session(void) {
+    const char *name = "storage query low storage blocks new session";
     dump_status_t status = {0};
 
     reset_test_dir();
-    dump_pcm_set_statvfs_fn_for_test(fake_statvfs_low);
-    dump_pcm_data_write("s", 1, "statvfs", "low");
+    dump_pcm_set_storage_query_fn_for_test(fake_storage_low);
+    dump_pcm_data_write("s", 1, "storage", "low");
     usleep(60000);
-    dump_pcm_set_statvfs_fn_for_test(NULL);
+    dump_pcm_set_storage_query_fn_for_test(NULL);
     if (dump_pcm_data_get_status(&status) != 0 || status.low_storage_triggered != 1 ||
         status.active_session_count != 0) {
         fail(name, "low storage branch did not latch correctly");
@@ -1048,30 +1039,30 @@ static void test_statvfs_low_storage_blocks_new_session(void) {
     pass(name);
 }
 
-static void test_statvfs_large_storage_reports_full_value(void) {
-    const char *name = "statvfs large storage reports full value";
+static void test_storage_large_storage_reports_full_value(void) {
+    const char *name = "storage query large storage reports full value";
     dump_status_t status = {0};
 
     reset_test_dir();
     unsetenv("AUDIO_DUMP_ENABLED");
-    dump_pcm_data_write("s", 1, "statvfs", "reset");
+    dump_pcm_data_write("s", 1, "storage", "reset");
     usleep(30000);
     setenv("AUDIO_DUMP_ENABLED", "1", 1);
     unsetenv("AUDIO_DUMP_TEST_AVAILABLE_MB");
     usleep(1100000);
-    dump_pcm_set_statvfs_fn_for_test(fake_statvfs_large);
-    dump_pcm_data_write("s", 1, "statvfs", "large");
+    dump_pcm_set_storage_query_fn_for_test(fake_storage_large);
+    dump_pcm_data_write("s", 1, "storage", "large");
     usleep(60000);
-    dump_pcm_set_statvfs_fn_for_test(NULL);
+    dump_pcm_set_storage_query_fn_for_test(NULL);
 
     if (dump_pcm_data_get_status(&status) != 0 || status.available_storage_mb != 33792 ||
         status.active_session_count != 1) {
-        stop_and_wait("statvfs", "large");
+        stop_and_wait("storage", "large");
         fail(name, "expected full 64-bit storage value to be preserved");
         return;
     }
 
-    stop_and_wait("statvfs", "large");
+    stop_and_wait("storage", "large");
     pass(name);
 }
 
@@ -1869,6 +1860,7 @@ static void test_file_manager_cleanup_filters_non_pcm_files(void) {
     char fresh_pcm[512] = {0};
     char note_txt[512] = {0};
     char dir_pcm[512] = {0};
+    char host_backup[512] = {0};
     FILE *fp = NULL;
 
     reset_test_dir();
@@ -1876,6 +1868,7 @@ static void test_file_manager_cleanup_filters_non_pcm_files(void) {
     snprintf(fresh_pcm, sizeof(fresh_pcm), "%sfresh_keepcheck.pcm", file_mgr_get_root_dir());
     snprintf(note_txt, sizeof(note_txt), "%snotes.txt", file_mgr_get_root_dir());
     snprintf(dir_pcm, sizeof(dir_pcm), "%snested_dir.pcm", file_mgr_get_root_dir());
+    snprintf(host_backup, sizeof(host_backup), "%smix.pcm.bak", file_mgr_get_root_dir());
 
     fp = fopen(old_pcm, "wb");
     if (fp != NULL) {
@@ -1889,15 +1882,21 @@ static void test_file_manager_cleanup_filters_non_pcm_files(void) {
     if (fp != NULL) {
         fclose(fp);
     }
+    fp = fopen(host_backup, "wb");
+    if (fp != NULL) {
+        fclose(fp);
+    }
     mkdir(dir_pcm, 0755);
     touch_old_file(old_pcm);
     touch_old_file(note_txt);
+    touch_old_file(host_backup);
 
     if (file_mgr_cleanup(1, 1) != 0 || path_exists(old_pcm) || !path_exists(fresh_pcm) ||
-        !path_exists(note_txt) || !path_exists(dir_pcm)) {
+        !path_exists(note_txt) || !path_exists(dir_pcm) || !path_exists(host_backup)) {
         remove(old_pcm);
         remove(fresh_pcm);
         remove(note_txt);
+        remove(host_backup);
         rmdir(dir_pcm);
         fail(name, "cleanup filtered the wrong paths");
         return;
@@ -1905,6 +1904,7 @@ static void test_file_manager_cleanup_filters_non_pcm_files(void) {
 
     remove(fresh_pcm);
     remove(note_txt);
+    remove(host_backup);
     rmdir(dir_pcm);
     pass(name);
 }
@@ -2591,9 +2591,9 @@ int main(void) {
     test_low_storage_latch_requires_reenable();
     test_filename_hash_disambiguates_escaped_collisions();
     test_same_timestamp_rollovers_get_unique_files();
-    test_statvfs_failure_blocks_new_session();
-    test_statvfs_low_storage_blocks_new_session();
-    test_statvfs_large_storage_reports_full_value();
+    test_storage_failure_blocks_new_session();
+    test_storage_low_storage_blocks_new_session();
+    test_storage_large_storage_reports_full_value();
     test_queue_direct();
     test_queue_empty_pop_and_byte_limit();
     test_session_direct();

@@ -10,6 +10,47 @@
 #include <cutils/properties.h>
 #endif
 
+#if defined(_WIN32)
+#include <windows.h>
+#else
+#include <sys/statvfs.h>
+#endif
+
+/* Platform default for free-space probing. The injected hook, when set, wins. */
+static int default_storage_query(const char *path, uint64_t *available_bytes) {
+    if (path == NULL || available_bytes == NULL) {
+        return -1;
+    }
+
+#if defined(_WIN32)
+    {
+        ULARGE_INTEGER free_bytes;
+
+        if (!GetDiskFreeSpaceExA(path, &free_bytes, NULL, NULL)) {
+            return -1;
+        }
+        *available_bytes = (uint64_t)free_bytes.QuadPart;
+    }
+#else
+    {
+        struct statvfs st;
+
+        if (statvfs(path, &st) != 0) {
+            return -1;
+        }
+        *available_bytes = (uint64_t)st.f_bavail * (uint64_t)st.f_frsize;
+    }
+#endif
+
+    return 0;
+}
+
+static int query_storage(const char *path, uint64_t *available_bytes) {
+    dump_storage_query_fn_t fn = g_dump_storage_query_fn;
+
+    return (fn != NULL ? fn : default_storage_query)(path, available_bytes);
+}
+
 uint64_t get_timestamp_ms(void) {
     struct timespec ts;
 
@@ -59,16 +100,16 @@ int check_storage(void) {
     }
 
     {
-        struct statvfs st;
+        uint64_t available_bytes = 0;
         uint64_t available_mb = 0;
         const char *dir = file_mgr_get_root_dir();
-        if (g_dump_statvfs_fn(dir, &st) != 0) {
+        if (query_storage(dir, &available_bytes) != 0) {
             pthread_mutex_unlock(&g_storage_mutex);
             LOGE("Failed to get storage info: %s", dir);
             return -1;
         }
 
-        available_mb = ((uint64_t)st.f_bavail * (uint64_t)st.f_frsize) / (1024ULL * 1024ULL);
+        available_mb = available_bytes / (1024ULL * 1024ULL);
         atomic_store(&g_ctx.storage_cache_mb, available_mb);
         atomic_store(&g_ctx.last_storage_check, now);
         LOGI("Storage available: dir=%s available=%" PRIu64 " MB threshold=%d MB", dir, available_mb,
