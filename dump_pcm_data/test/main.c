@@ -1750,6 +1750,242 @@ done:
     pass(name);
 }
 
+static void test_sidecar_split_creates_two_sidecars(void) {
+    const char *name = "split creates two sidecars";
+    const char *why = NULL;
+    dump_pcm_format_t fmt = {48000, 2, 16, DUMP_PCM_FORMAT_S16_LE};
+    char files[4][512] = {{0}};
+    char json_path[512] = {0};
+    char buf[1024] = {0};
+    int count = 0;
+    int n = 0;
+    bool saw_zero = false;
+    bool saw_one = false;
+
+    reset_test_dir();
+    if (dump_pcm_set_metadata_enabled(1) != 0) {
+        why = "switch did not enable sidecar";
+        goto done;
+    }
+
+    dump_pcm_set_file_size_limit_for_test(10);
+    dump_pcm_data_write_ex("0123456789", 10, "split", "meta", &fmt);
+    dump_pcm_data_write_ex("abcde", 5, "split", "meta", &fmt);
+    stop_and_wait("split", "meta");
+
+    count = find_pcm_files(files, 4);
+    if (count != 2) {
+        why = "expected two pcm files";
+        goto done;
+    }
+
+    for (int i = 0; i < count; ++i) {
+        json_path_for_pcm(files[i], json_path, sizeof(json_path));
+        if (!wait_for_sidecar(json_path, 2000)) {
+            why = "missing sidecar";
+            goto done;
+        }
+        n = read_file(json_path, buf, sizeof(buf) - 1);
+        if (n <= 0) {
+            why = "unreadable sidecar";
+            goto done;
+        }
+        buf[n] = '\0';
+        if (strstr(buf, "\"complete\": true") == NULL) {
+            why = "split sidecar not complete";
+            goto done;
+        }
+        if (strstr(buf, "\"split_index\": 0") != NULL) {
+            saw_zero = true;
+        }
+        if (strstr(buf, "\"split_index\": 1") != NULL) {
+            saw_one = true;
+        }
+    }
+    if (!saw_zero || !saw_one) {
+        why = "split indexes not recorded";
+        goto done;
+    }
+
+done:
+    dump_pcm_set_file_size_limit_for_test(0);
+    dump_pcm_set_metadata_enabled(0);
+    remove_case_artifacts();
+    if (why != NULL) {
+        fail(name, why);
+        return;
+    }
+    pass(name);
+}
+
+static void test_sidecar_rollover_creates_new_sidecar(void) {
+    const char *name = "rollover creates a new sidecar";
+    const char *why = NULL;
+    dump_pcm_format_t fmt = {48000, 2, 16, DUMP_PCM_FORMAT_S16_LE};
+    char files[4][512] = {{0}};
+    char json_path[512] = {0};
+    char buf[1024] = {0};
+    uint64_t gens[4] = {0};
+    int count = 0;
+    int n = 0;
+
+    reset_test_dir();
+    if (dump_pcm_set_metadata_enabled(1) != 0) {
+        why = "switch did not enable sidecar";
+        goto done;
+    }
+
+    dump_pcm_data_write_ex("aaaaa", 5, "roll", "meta", &fmt);
+    usleep(2200000);
+    dump_pcm_data_write_ex("bbbbb", 5, "roll", "meta", &fmt);
+    stop_and_wait("roll", "meta");
+
+    count = find_pcm_files(files, 4);
+    if (count != 2) {
+        why = "expected a new file after the rollover window";
+        goto done;
+    }
+
+    for (int i = 0; i < count; ++i) {
+        json_path_for_pcm(files[i], json_path, sizeof(json_path));
+        if (!wait_for_sidecar(json_path, 2000)) {
+            why = "missing sidecar";
+            goto done;
+        }
+        n = read_file(json_path, buf, sizeof(buf) - 1);
+        if (n <= 0) {
+            why = "unreadable sidecar";
+            goto done;
+        }
+        buf[n] = '\0';
+        if (strstr(buf, "\"complete\": true") == NULL) {
+            why = "rollover sidecar not complete";
+            goto done;
+        }
+        if (!json_uint_field(buf, "generation", &gens[i])) {
+            why = "generation missing from sidecar";
+            goto done;
+        }
+    }
+    if (gens[0] == gens[1]) {
+        why = "rollover reused the generation";
+        goto done;
+    }
+
+done:
+    dump_pcm_set_metadata_enabled(0);
+    remove_case_artifacts();
+    if (why != NULL) {
+        fail(name, why);
+        return;
+    }
+    pass(name);
+}
+
+static int run_isolated_sidecar_kill_test(void) {
+    const char *dir = getenv("AUDIO_DUMP_SIDECAR_KILL_DIR");
+    dump_pcm_format_t fmt = {48000, 2, 16, DUMP_PCM_FORMAT_S16_LE};
+
+    if (dir == NULL) {
+        return 1;
+    }
+    if (dump_pcm_set_root_dir(dir) != 0 || dump_pcm_set_metadata_enabled(1) != 0) {
+        return 1;
+    }
+
+    dump_pcm_data_write_ex("abcdef", 6, "kill", "meta", &fmt);
+    usleep(250000);
+    _exit(0); /* no stop(): the file is never finalised */
+}
+
+static void test_sidecar_survives_without_stop(void) {
+    const char *name = "sidecar stays incomplete without stop";
+    const char *why = NULL;
+    char dir[256] = {0};
+    char path[512] = {0};
+    char buf[2048] = {0};
+    int json_count = 0;
+    int n = 0;
+    pid_t pid = 0;
+    int status = 0;
+
+    snprintf(dir, sizeof(dir), "/tmp/audio_dump_test/kill_%d/", (int)getpid());
+    rmdir(dir);
+    if (mkdir(dir, 0755) != 0 && errno != EEXIST) {
+        fail(name, "cannot prepare directory");
+        return;
+    }
+
+    pid = fork();
+    if (pid == 0) {
+        setenv("AUDIO_DUMP_SIDECAR_KILL_DIR", dir, 1);
+        setenv("AUDIO_DUMP_RUN_SIDECAR_KILL_TEST", "1", 1);
+        execl("./dump_pcm_test", "./dump_pcm_test", NULL);
+        _exit(2);
+    }
+    waitpid(pid, &status, 0);
+    if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
+        why = "child did not exit cleanly";
+        goto done;
+    }
+
+    {
+        DIR *d = opendir(dir);
+        struct dirent *entry = NULL;
+
+        if (d == NULL) {
+            why = "cannot scan directory";
+            goto done;
+        }
+        while ((entry = readdir(d)) != NULL) {
+            size_t len = strlen(entry->d_name);
+            if (len > 5 && strcmp(entry->d_name + len - 5, ".json") == 0) {
+                json_count++;
+                snprintf(path, sizeof(path), "%s%s", dir, entry->d_name);
+            }
+        }
+        closedir(d);
+    }
+
+    if (json_count != 1) {
+        why = "expected exactly one sidecar";
+        goto done;
+    }
+    n = read_file(path, buf, sizeof(buf) - 1);
+    if (n <= 0) {
+        why = "sidecar unreadable";
+        goto done;
+    }
+    buf[n] = '\0';
+    if (strstr(buf, "\"complete\": false") == NULL || strstr(buf, "total_bytes") != NULL) {
+        why = "unfinalised sidecar looks complete";
+        goto done;
+    }
+
+done:
+    {
+        DIR *d = opendir(dir);
+        struct dirent *entry = NULL;
+
+        if (d != NULL) {
+            while ((entry = readdir(d)) != NULL) {
+                if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) {
+                    continue;
+                }
+                snprintf(path, sizeof(path), "%s%s", dir, entry->d_name);
+                remove(path);
+            }
+            closedir(d);
+        }
+    }
+    rmdir(dir);
+    if (why != NULL) {
+        fail(name, why);
+        return;
+    }
+    pass(name);
+}
+
 static void test_queue_allocation_failures(void) {
     const char *name = "queue allocation failures";
     queue_t queue;
@@ -3182,6 +3418,10 @@ int main(void) {
         return run_isolated_runtime_controls_test();
     }
 
+    if (getenv("AUDIO_DUMP_RUN_SIDECAR_KILL_TEST") != NULL) {
+        return run_isolated_sidecar_kill_test();
+    }
+
     if (getenv("AUDIO_DUMP_RUN_PUBLIC_WRITE_ALLOC_TEST") != NULL) {
         return run_isolated_public_write_allocation_failures();
     }
@@ -3254,6 +3494,9 @@ int main(void) {
     test_sidecar_lifecycle_on_real_file();
     test_sidecar_legacy_write_leaves_no_sidecar();
     test_sidecar_disabled_metadata_leaves_no_sidecar();
+    test_sidecar_split_creates_two_sidecars();
+    test_sidecar_rollover_creates_new_sidecar();
+    test_sidecar_survives_without_stop();
     test_queue_allocation_failures();
     test_session_allocation_failures();
     test_public_write_allocation_failures();
