@@ -146,7 +146,7 @@ DUMP_PCM_API int dump_pcm_set_root_dir(const char *dir);
 
 | 文件 | 内容 |
 |---|---|
-| `include/dump_pcm_data.h` | `dump_pcm_data_write/stop`、状态结构体、本期新增的公开接口；不再包含 `<sys/statvfs.h>` |
+| `include/dump_pcm_data.h` | `dump_pcm_data_write/stop`、状态结构体、本期新增的公开接口；不再包含 `<sys/statvfs.h>` 与 `<pthread.h>` |
 | `src/dump_test_hooks.h`（不对外安装） | 存储/线程创建/时间/文件大小等 `_for_test` 注入点及类型 |
 
 存储探测抽象：
@@ -277,7 +277,7 @@ G-01 属于既有缺陷，与本方案无关，但不修它后续所有 PR 都�
 |---|---|---|---|
 | PR0 | 基线修复 G-01 | 修正 `check_docs_build_contract.sh` 文档路径 | ✅ 已合并；CI `pc-verify` 三件套通过 |
 | PR1 | D-01 时钟统一 + D-02 开关门控 + D-03 I/O 下沉 + C3 语义 | 实现 + T-01/T-02/T-03 + 既有 failpoint 用例拆分 | 🔧 D-01/D-02/C3 ✅；D-03 已实现待 CI |
-| PR2 | D-06 拆头与存储抽象 + D-07 mkdir 宏 | 实现 + 测试桩迁移 + C2 匹配收紧 + T-06 | ⏳ |
+| PR2 | D-06 拆头与存储抽象 + D-07 mkdir 宏 | 实现 + 测试桩迁移 + C2 匹配收紧 + T-06 | 🔧 已实现待 CI |
 | PR3 | D-04 开关 + D-05 根目录 + D-09 CMake/MinGW + D-08 观测宏 | 实现 + T-04/T-05/T-07/T-08 + AGENTS.md | ⏳ |
 | 另立项 | D4 元数据 sidecar | 先定义元数据输入契约 | ⏳ |
 

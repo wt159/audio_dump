@@ -16,7 +16,7 @@ pthread_cond_t g_init_cond = PTHREAD_COND_INITIALIZER;
 _Atomic int g_init_state = DUMP_INIT_UNINITIALIZED;
 uint64_t g_last_init_fail_ms = 0;
 pthread_mutex_t g_storage_mutex = PTHREAD_MUTEX_INITIALIZER;
-dump_statvfs_fn_t g_dump_statvfs_fn = statvfs;
+dump_storage_query_fn_t g_dump_storage_query_fn = NULL;
 dump_pthread_create_fn_t g_dump_pthread_create_fn = pthread_create;
 #if defined(DUMP_PCM_PC) || !defined(ANDROID)
 dump_time_ms_fn_t g_dump_time_ms_fn = NULL;
@@ -265,8 +265,8 @@ void dump_pcm_data_stop(const char *key1, const char *key2) {
 }
 
 #if defined(DUMP_PCM_PC) || !defined(ANDROID)
-void dump_pcm_set_statvfs_fn_for_test(dump_statvfs_fn_t fn) {
-    g_dump_statvfs_fn = (fn != NULL) ? fn : statvfs;
+void dump_pcm_set_storage_query_fn_for_test(dump_storage_query_fn_t fn) {
+    g_dump_storage_query_fn = fn;
 }
 
 void dump_pcm_set_pthread_create_fn_for_test(dump_pthread_create_fn_t fn) {

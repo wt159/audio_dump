@@ -3,6 +3,7 @@
 #define DUMP_PCM_INTERNAL_DEBUG_API 1
 
 #include "../include/dump_pcm_data.h"
+#include "../src/dump_test_hooks.h"
 #include "../src/file_mgr.h"
 #include "../src/key_utils.h"
 #include "../src/logger.h"
@@ -32,7 +33,7 @@
 #define dump_pcm_data_get_status dump_pcm_data_get_status__whitebox
 #define dump_pcm_data_get_active_sessions dump_pcm_data_get_active_sessions__whitebox
 #define dump_pcm_set_time_ms_fn_for_test dump_pcm_set_time_ms_fn_for_test__whitebox
-#define dump_pcm_set_statvfs_fn_for_test dump_pcm_set_statvfs_fn_for_test__whitebox
+#define dump_pcm_set_storage_query_fn_for_test dump_pcm_set_storage_query_fn_for_test__whitebox
 #define dump_pcm_set_pthread_create_fn_for_test dump_pcm_set_pthread_create_fn_for_test__whitebox
 #define dump_pcm_set_file_size_limit_for_test dump_pcm_set_file_size_limit_for_test__whitebox
 
@@ -43,7 +44,7 @@
 #define g_init_state g_init_state__whitebox
 #define g_last_init_fail_ms g_last_init_fail_ms__whitebox
 #define g_storage_mutex g_storage_mutex__whitebox
-#define g_dump_statvfs_fn g_dump_statvfs_fn__whitebox
+#define g_dump_storage_query_fn g_dump_storage_query_fn__whitebox
 #define g_dump_pthread_create_fn g_dump_pthread_create_fn__whitebox
 #define g_dump_time_ms_fn g_dump_time_ms_fn__whitebox
 #define g_file_size_limit_for_test g_file_size_limit_for_test__whitebox
