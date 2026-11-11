@@ -54,6 +54,7 @@
 - `test/main.c` is a large PC test harness; if you change core logic, expect many assertions there. `test/proc_iso.c` is the only place that spawns a child process, and `test/test_plat.h` the only place with platform spellings (`mkdir`, `setenv`, the test root). A `_Static_assert` pins the case count at 66.
 - `-Wl,--wrap=` does work on MinGW PE, but three things break it silently: defining `DLL_EXPORT` (turns the winpthread declarations into `dllimport`), wrapping a call that is already resolved inside the same translation unit, and linking with `-static` (that also intercepts winpthreads' internal calls). The test target must never define `DLL_EXPORT`.
 - Isolated cases re-execute the test binary through `iso_run()`, which passes an explicit environment block rather than mutating the parent's. A spawn that cannot be waited on is reported as a failure; treating "no result" as success is how the old `fork()` code once passed a failing case.
+- The harness refuses to report PASS on a broken fixture: `reset_test_dir()` latches a `g_fixture_error`, `pass()` downgrades to FAIL, and the file-counting helpers return -1 instead of 0 when the directory cannot be read. Verify the latch still works by pointing `AUDIO_DUMP_DIR` at a path whose parent is a regular file — most of the suite must go red.
 
 ## Keep in mind
 - Generated artifacts live under `dump_pcm_data/` and are ignored via the local `.gitignore` (`*.o`, `*.gcda`, `*.gcno`, `*.gcov`, `dump_pcm_test`).
