@@ -33,6 +33,19 @@ static int tests_passed = 0;
 static int tests_failed = 0;
 static char g_test_dir_base[256] = {0};
 static int g_test_dir_seq = 0;
+/* Set when a fixture could not establish the state a case is about to assert
+ * on. A case running against a fixture that silently failed would otherwise
+ * report PASS for having observed nothing.
+ *
+ * Measured with a root whose parent is a regular file, so no case can create
+ * its directory: 45 of 66 previously-plausible cases now fail, and 21 still
+ * pass. Sixteen of those never touch the filesystem. Four assert the *absence*
+ * of a side effect - `init retry path`, `init failure path`,
+ * `init do_init failures`, `disabled write has no side effects` - and cannot
+ * tell "nothing happened" from "nothing could happen"; they only stay honest
+ * because a broken root turns most of the suite red first. Do not read their
+ * PASS as evidence that the mechanism under test ran. */
+static const char *g_fixture_error = NULL;
 
 static void pc_log_fn(log_level_t level, const char *tag, const char *fmt, ...) {
     const char *level_str[] = {"ERROR", "WARN", "INFO"};
@@ -46,6 +59,15 @@ static void pc_log_fn(log_level_t level, const char *tag, const char *fmt, ...) 
 }
 
 static void pass(const char *name) {
+    /* A broken fixture outranks the case's own verdict: whatever it observed,
+     * it observed against the wrong state. */
+    if (g_fixture_error != NULL) {
+        printf("FAIL: %s, %s\n", name, g_fixture_error);
+        tests_failed++;
+        g_fixture_error = NULL;
+        return;
+    }
+
     printf("PASS: %s\n", name);
     tests_passed++;
 }
@@ -53,6 +75,8 @@ static void pass(const char *name) {
 static void fail(const char *name, const char *why) {
     printf("FAIL: %s, %s\n", name, why);
     tests_failed++;
+    /* Drop any pending fixture error: this case already reported. */
+    g_fixture_error = NULL;
 }
 
 static void run_isolated_case(const char *name, const char *const *env,
@@ -353,9 +377,17 @@ static void reset_test_dir(void) {
     snprintf(path, sizeof(path), "%s_case_%02d/", g_test_dir_base, g_test_dir_seq++);
     file_mgr_set_root_dir(path);
 
-    tp_mkdir(file_mgr_get_root_dir());
+    /* Every case that fails to prepare its directory must not pass on the
+     * absence of files: an unreadable directory and an empty one look the
+     * same to count_pcm_files(). */
+    if (tp_mkdir(file_mgr_get_root_dir()) != 0 && errno != EEXIST) {
+        g_fixture_error = "cannot create the case directory";
+        return;
+    }
+
     dir = opendir(file_mgr_get_root_dir());
     if (dir == NULL) {
+        g_fixture_error = "cannot open the case directory";
         return;
     }
 
@@ -377,7 +409,10 @@ static int count_pcm_files(void) {
     int count = 0;
 
     if (dir == NULL) {
-        return 0;
+        /* -1, not 0: an unreadable directory must never be able to impersonate
+         * "no files here". Every caller compares against an exact count, so
+         * this reports as a failure rather than a quiet pass. */
+        return -1;
     }
 
     while ((entry = readdir(dir)) != NULL) {
@@ -396,7 +431,10 @@ static int find_pcm_files(char paths[][512], int max_paths) {
     int count = 0;
 
     if (dir == NULL) {
-        return 0;
+        /* -1, not 0: an unreadable directory must never be able to impersonate
+         * "no files here". Every caller compares against an exact count, so
+         * this reports as a failure rather than a quiet pass. */
+        return -1;
     }
 
     while ((entry = readdir(dir)) != NULL && count < max_paths) {
@@ -446,7 +484,10 @@ static int count_json_files(void) {
     int count = 0;
 
     if (dir == NULL) {
-        return 0;
+        /* -1, not 0: an unreadable directory must never be able to impersonate
+         * "no files here". Every caller compares against an exact count, so
+         * this reports as a failure rather than a quiet pass. */
+        return -1;
     }
 
     while ((entry = readdir(dir)) != NULL) {
@@ -3460,6 +3501,7 @@ int main(int argc, char **argv) {
          * the only evidence of where it happened. */
         printf("RUN:  %s\n", g_cases[i].name);
         fflush(stdout);
+        g_fixture_error = NULL;
         g_cases[i].run();
     }
 
