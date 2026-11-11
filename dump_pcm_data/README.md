@@ -219,6 +219,15 @@ MINGW_BIN=/d/Qt/Tools/mingw730_64/bin sh test/run_windows_smoke.sh
 
 `MINGW_BIN` 指向带 winpthreads 的工具链目录；默认取本机的 `D:/Qt/Tools/mingw730_64/bin`。
 
+加 `USE_CMAKE=1` 可改为走 `CMakeLists.txt` 构建并链接生成的静态库，这样 Windows 上的 CMake 目标也一并得到验证：
+
+```bash
+USE_CMAKE=1 \
+CMAKE_BIN=/d/tools/cmake-3.31.6-windows-x86_64/bin/cmake.exe \
+MINGW_BIN=/d/Qt/Tools/mingw730_64/bin \
+sh test/run_windows_smoke.sh
+```
+
 ## Android 编译
 
 ```bash
