@@ -13,9 +13,7 @@
 static char g_self_path[1024];
 
 #ifdef _WIN32
-#include <process.h>
 #include <windows.h>
-extern char **_environ;
 #else
 #include <sys/wait.h>
 #include <unistd.h>
@@ -45,70 +43,101 @@ const char *iso_self_path(void) {
     return g_self_path;
 }
 
-static char **base_environ(void) {
-#ifdef _WIN32
-    return _environ;
-#else
-    return environ;
-#endif
-}
-
-/* True when `entry` ("NAME=value") carries the same NAME as `override`. */
+/* True when `entry` ("NAME=value") carries the same NAME as `override`.
+ * Windows also seeds the environment with "=C:=C:\path" entries, where the name
+ * is empty; those must never match a real override. */
 static int env_name_matches(const char *entry, const char *override) {
     const char *eq = strchr(override, '=');
     size_t name_len = (eq != NULL) ? (size_t)(eq - override) : strlen(override);
 
-    if (strncmp(entry, override, name_len) != 0) {
+    if (name_len == 0 || strncmp(entry, override, name_len) != 0) {
         return 0;
     }
     return entry[name_len] == '=';
 }
 
-/* Duplicate the environment with overrides replacing same-named entries.
+#ifdef _WIN32
+
+/* Build a Windows environment block: NUL-separated "NAME=value" strings with a
+ * second NUL at the end.
  *
- * Replacement rather than append matters: POSIX leaves duplicates
- * unspecified and glibc's getenv() returns the first match, so an appended
- * override would be invisible. Strings stay borrowed from the caller and from
- * the process environment.
- */
-static char **build_env(const char *const *overrides, size_t override_count) {
-    char **base = base_environ();
-    size_t base_count = 0;
-    size_t out = 0;
-    char **env = NULL;
+ * Built from GetEnvironmentStringsA() and handed to CreateProcessA directly,
+ * rather than going through the CRT's _spawnve with `_environ`. On MinGW the
+ * spawn helper is linked into this binary as static runtime code, so it takes
+ * part in the link-time --wrap interposition the suite uses for fault
+ * injection; an access violation inside it is not something this layer can
+ * debug or control. CreateProcessA is the actual contract anyway: create the
+ * process, wait, read the exit code. */
+static char *build_env_block(const char *const *overrides, size_t override_count) {
+    char *source = GetEnvironmentStringsA();
+    char *block = NULL;
+    char *cursor = NULL;
+    const char *scan = NULL;
+    size_t total = 1;
 
-    while (base != NULL && base[base_count] != NULL) {
-        base_count++;
-    }
-
-    env = (char **)calloc(base_count + override_count + 1, sizeof(char *));
-    if (env == NULL) {
+    if (source == NULL) {
         return NULL;
     }
 
-    for (size_t i = 0; i < base_count; ++i) {
+    scan = source;
+    while (*scan != '\0') {
+        size_t len = strlen(scan);
         int replaced = 0;
 
         for (size_t j = 0; j < override_count; ++j) {
-            if (env_name_matches(base[i], overrides[j])) {
+            if (env_name_matches(scan, overrides[j])) {
                 replaced = 1;
                 break;
             }
         }
         if (!replaced) {
-            env[out++] = base[i];
+            total += len + 1;
         }
+        scan += len + 1;
     }
     for (size_t j = 0; j < override_count; ++j) {
-        env[out++] = (char *)overrides[j];
+        total += strlen(overrides[j]) + 1;
     }
-    env[out] = NULL;
-    return env;
+
+    block = (char *)malloc(total + 1);
+    if (block == NULL) {
+        FreeEnvironmentStringsA(source);
+        return NULL;
+    }
+
+    cursor = block;
+    scan = source;
+    while (*scan != '\0') {
+        size_t len = strlen(scan);
+        int replaced = 0;
+
+        for (size_t j = 0; j < override_count; ++j) {
+            if (env_name_matches(scan, overrides[j])) {
+                replaced = 1;
+                break;
+            }
+        }
+        if (!replaced) {
+            memcpy(cursor, scan, len + 1);
+            cursor += len + 1;
+        }
+        scan += len + 1;
+    }
+    for (size_t j = 0; j < override_count; ++j) {
+        size_t len = strlen(overrides[j]);
+
+        memcpy(cursor, overrides[j], len + 1);
+        cursor += len + 1;
+    }
+    *cursor = '\0';
+
+    FreeEnvironmentStringsA(source);
+    return block;
 }
 
+#endif /* _WIN32 */
+
 int iso_run(const char *const *env_overrides, iso_result_t *out) {
-    char *argv[2];
-    char **env = NULL;
     size_t override_count = 0;
 
     if (out == NULL) {
@@ -126,39 +155,87 @@ int iso_run(const char *const *env_overrides, iso_result_t *out) {
         override_count++;
     }
 
-    fprintf(stderr, "[iso] A before build_env\n");
-    env = build_env(env_overrides, override_count);
-    fprintf(stderr, "[iso] B env=%p\n", (void *)env);
-    if (env == NULL) {
-        return -1;
-    }
-
-    argv[0] = g_self_path;
-    argv[1] = NULL;
-    fprintf(stderr, "[iso] C self=%s\n", g_self_path);
-
 #ifdef _WIN32
     {
-        /* _P_WAIT blocks and yields the exit status directly, so there is no
-         * separate wait step here. */
-        fprintf(stderr, "[iso] D before spawn\n");
-        intptr_t status = _spawnve(_P_WAIT, g_self_path, (const char *const *)argv,
-                                   (const char *const *)env);
+        char cmdline[1200];
+        char *block = NULL;
+        STARTUPINFOA startup;
+        PROCESS_INFORMATION child;
+        DWORD exit_code = 0;
+        BOOL started = FALSE;
 
-        fprintf(stderr, "[iso] E after spawn rc=%ld\n", (long)status);
-        free(env);
-        if (status == -1) {
+        block = build_env_block(env_overrides, override_count);
+        if (block == NULL) {
             return -1;
         }
+
+        /* Paths with spaces must be quoted; the command line is one mutable
+         * buffer because CreateProcessA may write into it. */
+        snprintf(cmdline, sizeof(cmdline), "\"%s\"", g_self_path);
+        memset(&startup, 0, sizeof(startup));
+        startup.cb = sizeof(startup);
+        memset(&child, 0, sizeof(child));
+
+        started = CreateProcessA(NULL, cmdline, NULL, NULL, FALSE, 0, block, NULL, &startup,
+                                 &child);
+        free(block);
+        if (!started) {
+            return -1;
+        }
+
+        CloseHandle(child.hThread);
+        WaitForSingleObject(child.hProcess, INFINITE);
+        if (!GetExitCodeProcess(child.hProcess, &exit_code)) {
+            CloseHandle(child.hProcess);
+            return -1;
+        }
+        CloseHandle(child.hProcess);
+
         out->spawned = 1;
         out->exited = 1;
-        out->exit_code = (int)status;
+        out->exit_code = (int)exit_code;
         return 0;
     }
 #else
     {
-        pid_t pid = fork();
+        char *argv[2];
+        size_t base_count = 0;
+        size_t base_out = 0;
+        char **env = NULL;
+        pid_t pid = 0;
+        int status = 0;
 
+        while (environ != NULL && environ[base_count] != NULL) {
+            base_count++;
+        }
+        /* Replacement rather than append: getenv() returns the first match, so
+         * an appended override would be invisible. */
+        env = (char **)calloc(base_count + override_count + 1, sizeof(char *));
+        if (env == NULL) {
+            return -1;
+        }
+        for (size_t i = 0; i < base_count; ++i) {
+            int replaced = 0;
+
+            for (size_t j = 0; j < override_count; ++j) {
+                if (env_name_matches(environ[i], env_overrides[j])) {
+                    replaced = 1;
+                    break;
+                }
+            }
+            if (!replaced) {
+                env[base_out++] = environ[i];
+            }
+        }
+        for (size_t j = 0; j < override_count; ++j) {
+            env[base_out++] = (char *)env_overrides[j];
+        }
+        env[base_out] = NULL;
+
+        argv[0] = g_self_path;
+        argv[1] = NULL;
+
+        pid = fork();
         if (pid < 0) {
             free(env);
             return -1;
@@ -170,16 +247,12 @@ int iso_run(const char *const *env_overrides, iso_result_t *out) {
         free(env);
         out->spawned = 1;
 
-        {
-            int status = 0;
-
-            if (waitpid(pid, &status, 0) < 0) {
-                return -1;
-            }
-            if (WIFEXITED(status)) {
-                out->exited = 1;
-                out->exit_code = WEXITSTATUS(status);
-            }
+        if (waitpid(pid, &status, 0) < 0) {
+            return -1;
+        }
+        if (WIFEXITED(status)) {
+            out->exited = 1;
+            out->exit_code = WEXITSTATUS(status);
         }
         return 0;
     }
