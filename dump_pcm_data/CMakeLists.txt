@@ -44,8 +44,10 @@ option(DUMP_PCM_BUILD_TESTS "Build the PC test harness and register it with CTes
 if(DUMP_PCM_BUILD_TESTS)
     enable_testing()
 
+    # Only the test sources: the module objects come from the library, so the
+    # harness can never end up linked against a second copy built with
+    # different definitions.
     add_executable(dump_pcm_test
-        ${AUDIO_DUMP_SOURCES}
         test/main.c
         test/whitebox.c
         test/proc_iso.c)
