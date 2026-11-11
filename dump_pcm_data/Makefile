@@ -11,7 +11,7 @@ PROD_COV_DIR = $(BUILD_DIR)/coverage/prod
 TEST_COV_DIR = $(BUILD_DIR)/coverage/test
 WHITEBOX_COV_DIR = $(BUILD_DIR)/coverage/whitebox
 OBJ = $(patsubst src/%.c,$(OBJ_DIR)/%.o,$(SRC))
-TEST_OBJ = $(TEST_OBJ_DIR)/main.o
+TEST_OBJ = $(TEST_OBJ_DIR)/main.o $(TEST_OBJ_DIR)/proc_iso.o
 WHITEBOX_OBJ = $(WHITEBOX_OBJ_DIR)/whitebox.o
 
 TARGET = dump_pcm_test

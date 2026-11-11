@@ -20,9 +20,12 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <time.h>
 #include <utime.h>
-#include <sys/wait.h>
 #include <unistd.h>
+
+#include "proc_iso.h"
+#include "test_plat.h"
 
 int run_whitebox_coverage_shim(void);
 
@@ -50,6 +53,17 @@ static void pass(const char *name) {
 static void fail(const char *name, const char *why) {
     printf("FAIL: %s, %s\n", name, why);
     tests_failed++;
+}
+
+static void run_isolated_case(const char *name, const char *const *env,
+                              const char *why) {
+    iso_result_t result;
+
+    if (iso_run(env, &result) != 0 || !iso_ok(&result)) {
+        fail(name, why);
+        return;
+    }
+    pass(name);
 }
 
 static int fake_storage_fail(const char *path, uint64_t *available_bytes) {
@@ -332,14 +346,14 @@ static void reset_test_dir(void) {
     char path[512] = {0};
 
     if (g_test_dir_base[0] == '\0') {
-        strncpy(g_test_dir_base, "/tmp/audio_dump_test", sizeof(g_test_dir_base) - 1);
+        strncpy(g_test_dir_base, tp_test_root(), sizeof(g_test_dir_base) - 1);
         g_test_dir_base[sizeof(g_test_dir_base) - 1] = '\0';
     }
 
     snprintf(path, sizeof(path), "%s_case_%02d/", g_test_dir_base, g_test_dir_seq++);
     file_mgr_set_root_dir(path);
 
-    mkdir(file_mgr_get_root_dir(), 0755);
+    tp_mkdir(file_mgr_get_root_dir());
     dir = opendir(file_mgr_get_root_dir());
     if (dir == NULL) {
         return;
@@ -995,7 +1009,7 @@ static void test_low_storage_latch_requires_reenable(void) {
     dump_status_t status = {0};
 
     reset_test_dir();
-    setenv("AUDIO_DUMP_TEST_AVAILABLE_MB", "100", 1);
+    tp_setenv("AUDIO_DUMP_TEST_AVAILABLE_MB", "100");
     dump_pcm_data_write("low", 3, "low_key", "one");
     usleep(60000);
     dump_pcm_data_get_status(&status);
@@ -1004,7 +1018,7 @@ static void test_low_storage_latch_requires_reenable(void) {
         return;
     }
 
-    setenv("AUDIO_DUMP_TEST_AVAILABLE_MB", "1000", 1);
+    tp_setenv("AUDIO_DUMP_TEST_AVAILABLE_MB", "1000");
     dump_pcm_data_write("low", 3, "low_key", "two");
     usleep(60000);
     dump_pcm_data_get_status(&status);
@@ -1013,14 +1027,14 @@ static void test_low_storage_latch_requires_reenable(void) {
         return;
     }
 
-    unsetenv("AUDIO_DUMP_ENABLED");
+    tp_unsetenv("AUDIO_DUMP_ENABLED");
     dump_pcm_data_write("low", 3, "low_key", "three");
     usleep(30000);
-    setenv("AUDIO_DUMP_ENABLED", "1", 1);
+    tp_setenv("AUDIO_DUMP_ENABLED", "1");
     dump_pcm_data_write("low", 3, "low_key", "three");
     usleep(80000);
     dump_pcm_data_get_status(&status);
-    unsetenv("AUDIO_DUMP_TEST_AVAILABLE_MB");
+    tp_unsetenv("AUDIO_DUMP_TEST_AVAILABLE_MB");
     stop_and_wait("low_key", "three");
 
     if (status.low_storage_triggered || status.active_session_count == 0 || count_pcm_files() != 1) {
@@ -1097,7 +1111,7 @@ static void test_storage_failure_blocks_new_session(void) {
     dump_status_t after = {0};
 
     reset_test_dir();
-    unsetenv("AUDIO_DUMP_TEST_AVAILABLE_MB");
+    tp_unsetenv("AUDIO_DUMP_TEST_AVAILABLE_MB");
     usleep(1100000);
     dump_pcm_data_get_status(&before);
     dump_pcm_set_storage_query_fn_for_test(fake_storage_fail);
@@ -1137,11 +1151,11 @@ static void test_storage_large_storage_reports_full_value(void) {
     dump_status_t status = {0};
 
     reset_test_dir();
-    unsetenv("AUDIO_DUMP_ENABLED");
+    tp_unsetenv("AUDIO_DUMP_ENABLED");
     dump_pcm_data_write("s", 1, "storage", "reset");
     usleep(30000);
-    setenv("AUDIO_DUMP_ENABLED", "1", 1);
-    unsetenv("AUDIO_DUMP_TEST_AVAILABLE_MB");
+    tp_setenv("AUDIO_DUMP_ENABLED", "1");
+    tp_unsetenv("AUDIO_DUMP_TEST_AVAILABLE_MB");
     usleep(1100000);
     dump_pcm_set_storage_query_fn_for_test(fake_storage_large);
     dump_pcm_data_write("s", 1, "storage", "large");
@@ -1606,7 +1620,7 @@ static void test_sidecar_switch_state(void) {
 static void test_sidecar_write_file_failure(void) {
     const char *name = "sidecar write file failure";
 
-    if (sidecar_write_file("/proc/nonexistent/x.json", "{}", 2) != -1) {
+    if (sidecar_write_file("/nonexistent_audio_dump/x.json", "{}", 2) != -1) {
         fail(name, "unwritable directory accepted");
         return;
     }
@@ -1906,25 +1920,23 @@ static void test_sidecar_survives_without_stop(void) {
     char buf[2048] = {0};
     int json_count = 0;
     int n = 0;
-    pid_t pid = 0;
-    int status = 0;
+    char kill_env[384] = {0};
+    const char *env[3];
+    iso_result_t result;
 
-    snprintf(dir, sizeof(dir), "/tmp/audio_dump_test/kill_%d/", (int)getpid());
+    snprintf(dir, sizeof(dir), "%s/kill_%d/", tp_test_root(), (int)getpid());
     rmdir(dir);
-    if (mkdir(dir, 0755) != 0 && errno != EEXIST) {
+    if (tp_mkdir(dir) != 0 && errno != EEXIST) {
         fail(name, "cannot prepare directory");
         return;
     }
 
-    pid = fork();
-    if (pid == 0) {
-        setenv("AUDIO_DUMP_SIDECAR_KILL_DIR", dir, 1);
-        setenv("AUDIO_DUMP_RUN_SIDECAR_KILL_TEST", "1", 1);
-        execl("./dump_pcm_test", "./dump_pcm_test", NULL);
-        _exit(2);
-    }
-    waitpid(pid, &status, 0);
-    if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
+    snprintf(kill_env, sizeof(kill_env), "AUDIO_DUMP_SIDECAR_KILL_DIR=%s", dir);
+    env[0] = kill_env;
+    env[1] = "AUDIO_DUMP_RUN_SIDECAR_KILL_TEST=1";
+    env[2] = NULL;
+
+    if (iso_run(env, &result) != 0 || !iso_ok(&result)) {
         why = "child did not exit cleanly";
         goto done;
     }
@@ -2077,23 +2089,11 @@ static int run_isolated_public_write_allocation_failures(void) {
 
 static void test_public_write_allocation_failures(void) {
     const char *name = "public write allocation failures";
-    pid_t pid = fork();
-    int status = 0;
+    static const char *const env[] = {
+        "AUDIO_DUMP_ENABLED=1",
+        "AUDIO_DUMP_RUN_PUBLIC_WRITE_ALLOC_TEST=1", NULL};
 
-    if (pid == 0) {
-        setenv("AUDIO_DUMP_ENABLED", "1", 1);
-        setenv("AUDIO_DUMP_RUN_PUBLIC_WRITE_ALLOC_TEST", "1", 1);
-        execl("./dump_pcm_test", "./dump_pcm_test", NULL);
-        _exit(2);
-    }
-
-    waitpid(pid, &status, 0);
-    if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
-        fail(name, "isolated public write allocation failure test failed");
-        return;
-    }
-
-    pass(name);
+    run_isolated_case(name, env, "isolated public write allocation failure test failed");
 }
 
 static int run_isolated_writer_queue_pop_failure(void) {
@@ -2210,65 +2210,29 @@ static int run_isolated_queue_full_failed_enqueue_clock_test(void) {
 
 static void test_writer_queue_pop_failure(void) {
     const char *name = "writer queue pop failure";
-    pid_t pid = fork();
-    int status = 0;
+    static const char *const env[] = {
+        "AUDIO_DUMP_ENABLED=1",
+        "AUDIO_DUMP_RUN_QUEUE_POP_TEST=1", NULL};
 
-    if (pid == 0) {
-        setenv("AUDIO_DUMP_ENABLED", "1", 1);
-        setenv("AUDIO_DUMP_RUN_QUEUE_POP_TEST", "1", 1);
-        execl("./dump_pcm_test", "./dump_pcm_test", NULL);
-        _exit(2);
-    }
-
-    waitpid(pid, &status, 0);
-    if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
-        fail(name, "isolated queue_pop failure test failed");
-        return;
-    }
-
-    pass(name);
+    run_isolated_case(name, env, "isolated queue_pop failure test failed");
 }
 
 static void test_writer_queue_full_write_rejection(void) {
     const char *name = "writer queue full write rejection";
-    pid_t pid = fork();
-    int status = 0;
+    static const char *const env[] = {
+        "AUDIO_DUMP_ENABLED=1",
+        "AUDIO_DUMP_RUN_QUEUE_FULL_TEST=1", NULL};
 
-    if (pid == 0) {
-        setenv("AUDIO_DUMP_ENABLED", "1", 1);
-        setenv("AUDIO_DUMP_RUN_QUEUE_FULL_TEST", "1", 1);
-        execl("./dump_pcm_test", "./dump_pcm_test", NULL);
-        _exit(2);
-    }
-
-    waitpid(pid, &status, 0);
-    if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
-        fail(name, "isolated queue_full write rejection test failed");
-        return;
-    }
-
-    pass(name);
+    run_isolated_case(name, env, "isolated queue_full write rejection test failed");
 }
 
 static void test_writer_queue_full_failed_enqueue_keeps_rollover_clock(void) {
     const char *name = "writer queue full failed enqueue keeps rollover clock";
-    pid_t pid = fork();
-    int status = 0;
+    static const char *const env[] = {
+        "AUDIO_DUMP_ENABLED=1",
+        "AUDIO_DUMP_RUN_QUEUE_FULL_CLOCK_TEST=1", NULL};
 
-    if (pid == 0) {
-        setenv("AUDIO_DUMP_ENABLED", "1", 1);
-        setenv("AUDIO_DUMP_RUN_QUEUE_FULL_CLOCK_TEST", "1", 1);
-        execl("./dump_pcm_test", "./dump_pcm_test", NULL);
-        _exit(2);
-    }
-
-    waitpid(pid, &status, 0);
-    if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
-        fail(name, "isolated queue_full clock test failed");
-        return;
-    }
-
-    pass(name);
+    run_isolated_case(name, env, "isolated queue_full clock test failed");
 }
 
 static void test_file_manager_idle_scan_skips_inactive_slots(void) {
@@ -2373,22 +2337,10 @@ static void test_session_capacity_rejection(void) {
 
 static void test_public_write_rejects_when_session_capacity_reached(void) {
     const char *name = "public write rejects when session capacity reached";
-    pid_t pid = fork();
-    int status = 0;
+    static const char *const env[] = {"AUDIO_DUMP_ENABLED=1",
+                                      "AUDIO_DUMP_RUN_SESSION_CAP_TEST=1", NULL};
 
-    if (pid == 0) {
-        setenv("AUDIO_DUMP_ENABLED", "1", 1);
-        setenv("AUDIO_DUMP_RUN_SESSION_CAP_TEST", "1", 1);
-        execl("./dump_pcm_test", "./dump_pcm_test", NULL);
-        _exit(2);
-    }
-
-    waitpid(pid, &status, 0);
-    if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
-        fail(name, "expected session cap to stay fixed after overflow write");
-        return;
-    }
-    pass(name);
+    run_isolated_case(name, env, "expected session cap to stay fixed after overflow write");
 }
 
 static int run_isolated_stop_while_pending_blocks(void) {
@@ -2433,23 +2385,11 @@ static int run_isolated_stop_while_pending_blocks(void) {
 
 static void test_stop_while_pending_blocks(void) {
     const char *name = "stop while pending blocks";
-    pid_t pid = fork();
-    int status = 0;
+    static const char *const env[] = {
+        "AUDIO_DUMP_ENABLED=1",
+        "AUDIO_DUMP_RUN_STOP_PENDING_TEST=1", NULL};
 
-    if (pid == 0) {
-        setenv("AUDIO_DUMP_ENABLED", "1", 1);
-        setenv("AUDIO_DUMP_RUN_STOP_PENDING_TEST", "1", 1);
-        execl("./dump_pcm_test", "./dump_pcm_test", NULL);
-        _exit(2);
-    }
-
-    waitpid(pid, &status, 0);
-    if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
-        fail(name, "isolated pending stop test failed");
-        return;
-    }
-
-    pass(name);
+    run_isolated_case(name, env, "isolated pending stop test failed");
 }
 
 static void test_file_manager_direct(void) {
@@ -2697,7 +2637,7 @@ static void test_file_manager_cleanup_filters_non_pcm_files(void) {
     if (fp != NULL) {
         fclose(fp);
     }
-    mkdir(dir_pcm, 0755);
+    tp_mkdir(dir_pcm);
     touch_old_file(old_pcm);
     touch_old_file(note_txt);
     touch_old_file(host_backup);
@@ -2812,18 +2752,18 @@ static void test_file_manager_cleanup_and_evict(void) {
     file_mgr_set_root_dir(conflict_path);
     if (file_mgr_cleanup(1, 1) != -1) {
         remove(conflict_path);
-        file_mgr_set_root_dir("/tmp/audio_dump_test");
+        file_mgr_set_root_dir(tp_test_root());
         fail(name, "expected cleanup failure for file path conflict");
         return;
     }
     if (file_mgr_init(&mgr) == 0) {
         remove(conflict_path);
-        file_mgr_set_root_dir("/tmp/audio_dump_test");
+        file_mgr_set_root_dir(tp_test_root());
         fail(name, "expected init failure for file path conflict");
         return;
     }
     remove(conflict_path);
-    file_mgr_set_root_dir("/tmp/audio_dump_test");
+    file_mgr_set_root_dir(tp_test_root());
 
     if (file_mgr_init(&mgr) != 0) {
         fail(name, "file manager init failed");
@@ -2875,40 +2815,61 @@ static void test_file_manager_init_and_open_failures(void) {
     file_manager_t mgr;
     bool is_new = false;
     char path[256] = {0};
+    char blocker[256] = {0};
+    char nested[320] = {0};
+    char gone[256] = {0};
     FILE *fp = NULL;
 
-    file_mgr_set_root_dir("/proc/forbidden/subdir");
+    /* A regular file used as a path component can never become a directory, so
+     * both the intermediate and the final mkdir below fail on every platform.
+     * The old fixture used /proc, which only means "unwritable" on POSIX. */
+    snprintf(blocker, sizeof(blocker), "%s/mgr_blocker", tp_test_root());
+    remove(blocker);
+    fp = fopen(blocker, "wb");
+    if (fp != NULL) {
+        fclose(fp);
+    }
+    snprintf(nested, sizeof(nested), "%s/subdir", blocker);
+
+    file_mgr_set_root_dir(nested);
     if (file_mgr_init(&mgr) == 0) {
-        file_mgr_set_root_dir("/tmp/audio_dump_test");
+        file_mgr_set_root_dir(tp_test_root());
         fail(name, "expected intermediate mkdir failure");
         return;
     }
 
-    file_mgr_set_root_dir("/proc/forbidden");
+    file_mgr_set_root_dir(blocker);
     if (file_mgr_init(&mgr) == 0) {
-        file_mgr_set_root_dir("/tmp/audio_dump_test");
+        file_mgr_set_root_dir(tp_test_root());
         fail(name, "expected final mkdir failure");
         return;
     }
 
-    file_mgr_set_root_dir("/proc");
+    /* Init over a writable directory succeeds; removing that directory makes the
+     * later open fail. This replaces "init over /proc succeeds but opening is
+     * not permitted", which no platform can guarantee portably. */
+    snprintf(gone, sizeof(gone), "%s/mgr_gone_%d/", tp_test_root(), (int)getpid());
+    rmdir(gone);
+    file_mgr_set_root_dir(gone);
     if (file_mgr_init(&mgr) != 0) {
-        file_mgr_set_root_dir("/tmp/audio_dump_test");
-        fail(name, "expected /proc init to succeed");
+        file_mgr_set_root_dir(tp_test_root());
+        fail(name, "expected init to succeed on a writable directory");
         return;
     }
 
+    rmdir(gone);
     fp = file_mgr_get_handle(&mgr, "openfail", "one", 1, 0, path, sizeof(path), &is_new);
     if (fp != NULL) {
         file_mgr_close(&mgr, fp);
         file_mgr_destroy(&mgr);
-        file_mgr_set_root_dir("/tmp/audio_dump_test");
-        fail(name, "expected open failure under /proc");
+        file_mgr_set_root_dir(tp_test_root());
+        fail(name, "expected open to fail after the root directory vanished");
         return;
     }
 
     file_mgr_destroy(&mgr);
-    file_mgr_set_root_dir("/tmp/audio_dump_test");
+    remove(blocker);
+    file_mgr_set_root_dir(tp_test_root());
     pass(name);
 }
 
@@ -2922,11 +2883,11 @@ static void test_file_manager_init_creates_and_destroy_closes(void) {
     FILE *fp_a = NULL;
     FILE *fp_b = NULL;
 
-    snprintf(root_dir, sizeof(root_dir), "/tmp/audio_dump_newdir_%ld", (long)getpid());
+    snprintf(root_dir, sizeof(root_dir), "%s_newdir_%ld", tp_test_root(), (long)getpid());
     reset_test_dir();
     file_mgr_set_root_dir(root_dir);
     if (file_mgr_init(&mgr) != 0) {
-        file_mgr_set_root_dir("/tmp/audio_dump_test");
+        file_mgr_set_root_dir(tp_test_root());
         fail(name, "expected init to create a new directory");
         return;
     }
@@ -2935,14 +2896,14 @@ static void test_file_manager_init_creates_and_destroy_closes(void) {
     fp_b = file_mgr_get_handle(&mgr, "destroy", "b", 2, 0, path_b, sizeof(path_b), &is_new);
     if (fp_a == NULL || fp_b == NULL) {
         file_mgr_destroy(&mgr);
-        file_mgr_set_root_dir("/tmp/audio_dump_test");
+        file_mgr_set_root_dir(tp_test_root());
         fail(name, "failed to open tracked handles");
         return;
     }
 
     file_mgr_destroy(&mgr);
     rmdir(root_dir);
-    file_mgr_set_root_dir("/tmp/audio_dump_test");
+    file_mgr_set_root_dir(tp_test_root());
     pass(name);
 }
 
@@ -2974,9 +2935,16 @@ static int run_isolated_pthread_create_failure_retry(void) {
 }
 
 static int run_isolated_init_failure_test(void) {
+    const char *dir = getenv("AUDIO_DUMP_DIR");
     dump_status_t status = {0};
 
-    file_mgr_set_root_dir("/dev/null/subdir");
+    if (dir == NULL || dir[0] == '\0') {
+        return 1;
+    }
+
+    /* The parent points this at a path whose parent component is a regular
+     * file, so no platform can create it as a directory. */
+    file_mgr_set_root_dir(dir);
     dump_pcm_data_write("x", 1, "bad", "init");
     if (dump_pcm_data_get_status(&status) != -1) {
         return 1;
@@ -3057,8 +3025,8 @@ static int run_isolated_runtime_controls_test(void) {
     char dir[256] = {0};
     char other[256] = {0};
 
-    snprintf(dir, sizeof(dir), "/tmp/audio_dump_test/rtc_%d/", (int)getpid());
-    snprintf(other, sizeof(other), "/tmp/audio_dump_test/rtc_other_%d/", (int)getpid());
+    snprintf(dir, sizeof(dir), "%s/rtc_%d/", tp_test_root(), (int)getpid());
+    snprintf(other, sizeof(other), "%s/rtc_other_%d/", tp_test_root(), (int)getpid());
     rmdir(dir);
     rmdir(other);
 
@@ -3100,7 +3068,7 @@ static int run_isolated_disabled_write_test(void) {
     dump_status_t status = {0};
     char dir[256] = {0};
 
-    snprintf(dir, sizeof(dir), "/tmp/audio_dump_test/disabled_%d/", (int)getpid());
+    snprintf(dir, sizeof(dir), "%s/disabled_%d/", tp_test_root(), (int)getpid());
     rmdir(dir);
     file_mgr_set_root_dir(dir);
 
@@ -3178,43 +3146,45 @@ static int run_isolated_session_capacity_test(void) {
 
 static void test_init_retry_path(void) {
     const char *name = "init retry path";
-    pid_t pid = fork();
-    int status = 0;
+    static const char *const env[] = {
+        "AUDIO_DUMP_ENABLED=1",
+        "AUDIO_DUMP_RUN_PTHREAD_CREATE_TEST=1", NULL};
 
-    if (pid == 0) {
-        setenv("AUDIO_DUMP_ENABLED", "1", 1);
-        setenv("AUDIO_DUMP_RUN_PTHREAD_CREATE_TEST", "1", 1);
-        execl("./dump_pcm_test", "./dump_pcm_test", NULL);
-        _exit(2);
-    }
-
-    waitpid(pid, &status, 0);
-    if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
-        fail(name, "isolated retry path failed");
-        return;
-    }
-
-    pass(name);
+    run_isolated_case(name, env, "isolated retry path failed");
 }
 
 static void test_init_failure_path(void) {
     const char *name = "init failure path";
-    pid_t pid = fork();
-    int status = 0;
-    char conflict_path[256] = {0};
+    char conflict_dir[256] = {0};
+    char blocker[256] = {0};
+    char conflict_path[320] = {0};
+    char dir_env[384] = {0};
+    const char *env[4];
+    iso_result_t result;
+    FILE *fp = NULL;
 
-    snprintf(conflict_path, sizeof(conflict_path), "/dev/null/subdir");
-
-    if (pid == 0) {
-        setenv("AUDIO_DUMP_ENABLED", "1", 1);
-        setenv("AUDIO_DUMP_DIR", conflict_path, 1);
-        setenv("AUDIO_DUMP_RUN_INIT_FAILURE_TEST", "1", 1);
-        execl("./dump_pcm_test", "./dump_pcm_test", NULL);
-        _exit(2);
+    /* A path whose parent component is a regular file can never be created as
+     * a directory. That proposition holds on every platform and drives the
+     * same S_ISDIR branch in ensure_dir_exists() the old /dev/null/subdir
+     * fixture relied on, without the POSIX device semantics. */
+    snprintf(conflict_dir, sizeof(conflict_dir), "%s/init_fail_%d/", tp_test_root(),
+             (int)getpid());
+    rmdir(conflict_dir);
+    (void)tp_mkdir(conflict_dir);
+    snprintf(blocker, sizeof(blocker), "%sblocker", conflict_dir);
+    fp = fopen(blocker, "wb");
+    if (fp != NULL) {
+        fclose(fp);
     }
+    snprintf(conflict_path, sizeof(conflict_path), "%s/subdir", blocker);
 
-    waitpid(pid, &status, 0);
-    if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
+    snprintf(dir_env, sizeof(dir_env), "AUDIO_DUMP_DIR=%s", conflict_path);
+    env[0] = "AUDIO_DUMP_ENABLED=1";
+    env[1] = dir_env;
+    env[2] = "AUDIO_DUMP_RUN_INIT_FAILURE_TEST=1";
+    env[3] = NULL;
+
+    if (iso_run(env, &result) != 0 || !iso_ok(&result)) {
         fail(name, "isolated init failure path failed");
         return;
     }
@@ -3228,19 +3198,17 @@ static void test_init_do_init_failures(void) {
     const char *modes[] = {"mutex", "condattr", "cond"};
 
     for (size_t i = 0; i < sizeof(modes) / sizeof(modes[0]); ++i) {
-        pid_t pid = fork();
-        int status = 0;
+        char failpoint[64] = {0};
+        const char *env[4];
+        iso_result_t result;
 
-        if (pid == 0) {
-            setenv("AUDIO_DUMP_ENABLED", "1", 1);
-            setenv("AUDIO_DUMP_RUN_INIT_FAILPOINT_TEST", "1", 1);
-            setenv("AUDIO_DUMP_INIT_FAILPOINT", modes[i], 1);
-            execl("./dump_pcm_test", "./dump_pcm_test", NULL);
-            _exit(2);
-        }
+        snprintf(failpoint, sizeof(failpoint), "AUDIO_DUMP_INIT_FAILPOINT=%s", modes[i]);
+        env[0] = "AUDIO_DUMP_ENABLED=1";
+        env[1] = "AUDIO_DUMP_RUN_INIT_FAILPOINT_TEST=1";
+        env[2] = failpoint;
+        env[3] = NULL;
 
-        waitpid(pid, &status, 0);
-        if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
+        if (iso_run(env, &result) != 0 || !iso_ok(&result)) {
             fail(name, modes[i]);
             return;
         }
@@ -3251,107 +3219,47 @@ static void test_init_do_init_failures(void) {
 
 static void test_init_setclock_fallback(void) {
     const char *name = "init setclock fallback";
-    pid_t pid = fork();
-    int status = 0;
+    static const char *const env[] = {
+        "AUDIO_DUMP_ENABLED=1",
+        "AUDIO_DUMP_RUN_SETCLOCK_FALLBACK_TEST=1", NULL};
 
-    if (pid == 0) {
-        setenv("AUDIO_DUMP_ENABLED", "1", 1);
-        setenv("AUDIO_DUMP_RUN_SETCLOCK_FALLBACK_TEST", "1", 1);
-        execl("./dump_pcm_test", "./dump_pcm_test", NULL);
-        _exit(2);
-    }
-
-    waitpid(pid, &status, 0);
-    if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
-        fail(name, "isolated setclock fallback path failed");
-        return;
-    }
-
-    pass(name);
+    run_isolated_case(name, env, "isolated setclock fallback path failed");
 }
 
 static void test_disabled_write_has_no_side_effects(void) {
     const char *name = "disabled write has no side effects";
-    pid_t pid = fork();
-    int status = 0;
+    static const char *const env[] = {
+        "AUDIO_DUMP_ENABLED=0",
+        "AUDIO_DUMP_RUN_DISABLED_WRITE_TEST=1", NULL};
 
-    if (pid == 0) {
-        setenv("AUDIO_DUMP_ENABLED", "0", 1);
-        setenv("AUDIO_DUMP_RUN_DISABLED_WRITE_TEST", "1", 1);
-        execl("./dump_pcm_test", "./dump_pcm_test", NULL);
-        _exit(2);
-    }
-
-    waitpid(pid, &status, 0);
-    if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
-        fail(name, "disabled write produced init side effects");
-        return;
-    }
-
-    pass(name);
+    run_isolated_case(name, env, "disabled write produced init side effects");
 }
 
 static void test_cleanup_deferred_to_writer_thread(void) {
     const char *name = "cleanup deferred to writer thread";
-    pid_t pid = fork();
-    int status = 0;
+    static const char *const env[] = {
+        "AUDIO_DUMP_ENABLED=1",
+        "AUDIO_DUMP_RUN_CLEANUP_DEFERRED_TEST=1", NULL};
 
-    if (pid == 0) {
-        setenv("AUDIO_DUMP_ENABLED", "1", 1);
-        setenv("AUDIO_DUMP_RUN_CLEANUP_DEFERRED_TEST", "1", 1);
-        execl("./dump_pcm_test", "./dump_pcm_test", NULL);
-        _exit(2);
-    }
-
-    waitpid(pid, &status, 0);
-    if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
-        fail(name, "caller thread performed a directory scan");
-        return;
-    }
-
-    pass(name);
+    run_isolated_case(name, env, "caller thread performed a directory scan");
 }
 
 static void test_runtime_controls(void) {
     const char *name = "runtime switch and root directory";
-    pid_t pid = fork();
-    int status = 0;
+    static const char *const env[] = {
+        "AUDIO_DUMP_ENABLED=1",
+        "AUDIO_DUMP_RUN_RUNTIME_CONTROLS_TEST=1", NULL};
 
-    if (pid == 0) {
-        setenv("AUDIO_DUMP_ENABLED", "1", 1);
-        setenv("AUDIO_DUMP_RUN_RUNTIME_CONTROLS_TEST", "1", 1);
-        execl("./dump_pcm_test", "./dump_pcm_test", NULL);
-        _exit(2);
-    }
-
-    waitpid(pid, &status, 0);
-    if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
-        fail(name, "runtime controls did not take effect");
-        return;
-    }
-
-    pass(name);
+    run_isolated_case(name, env, "runtime controls did not take effect");
 }
 
 static void test_init_wait_path(void) {
     const char *name = "init wait path";
-    pid_t pid = fork();
-    int status = 0;
+    static const char *const env[] = {
+        "AUDIO_DUMP_ENABLED=1",
+        "AUDIO_DUMP_RUN_INIT_WAIT_TEST=1", NULL};
 
-    if (pid == 0) {
-        setenv("AUDIO_DUMP_ENABLED", "1", 1);
-        setenv("AUDIO_DUMP_RUN_INIT_WAIT_TEST", "1", 1);
-        execl("./dump_pcm_test", "./dump_pcm_test", NULL);
-        _exit(2);
-    }
-
-    waitpid(pid, &status, 0);
-    if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
-        fail(name, "isolated init wait path failed");
-        return;
-    }
-
-    pass(name);
+    run_isolated_case(name, env, "isolated init wait path failed");
 }
 
 static int run_isolated_init_wait_test(void) {
@@ -3387,8 +3295,92 @@ static void test_whitebox_coverage_shim(void) {
     pass(name);
 }
 
-int main(void) {
+/* A table rather than a call list: the harness can then assert on the count,
+ * and dropping a case during a refactor becomes a build error instead of a
+ * quietly shorter run. */
+typedef struct {
+    const char *name;
+    void (*run)(void);
+} test_case_t;
+
+static const test_case_t g_cases[] = {
+    {"test_string_key_write_and_escape", test_string_key_write_and_escape},
+    {"test_key_validation", test_key_validation},
+    {"test_argument_guard_coverage", test_argument_guard_coverage},
+    {"test_storage_cache_interval_hits_cached_path", test_storage_cache_interval_hits_cached_path},
+    {"test_storage_cache_hits_cached_under_lock", test_storage_cache_hits_cached_under_lock},
+    {"test_session_separation_and_query", test_session_separation_and_query},
+    {"test_stop_then_new_session_creates_new_file", test_stop_then_new_session_creates_new_file},
+    {"test_write_gap_exactly_two_seconds_keeps_same_file", test_write_gap_exactly_two_seconds_keeps_same_file},
+    {"test_write_gap_over_two_seconds_creates_new_file", test_write_gap_over_two_seconds_creates_new_file},
+    {"test_low_storage_latch_requires_reenable", test_low_storage_latch_requires_reenable},
+    {"test_filename_hash_disambiguates_escaped_collisions", test_filename_hash_disambiguates_escaped_collisions},
+    {"test_same_timestamp_rollovers_get_unique_files", test_same_timestamp_rollovers_get_unique_files},
+    {"test_storage_failure_blocks_new_session", test_storage_failure_blocks_new_session},
+    {"test_storage_low_storage_blocks_new_session", test_storage_low_storage_blocks_new_session},
+    {"test_storage_large_storage_reports_full_value", test_storage_large_storage_reports_full_value},
+    {"test_queue_direct", test_queue_direct},
+    {"test_queue_empty_pop_and_byte_limit", test_queue_empty_pop_and_byte_limit},
+    {"test_session_direct", test_session_direct},
+    {"test_session_highest_generation_lookup", test_session_highest_generation_lookup},
+    {"test_session_file_action_policy", test_session_file_action_policy},
+    {"test_format_validation", test_format_validation},
+    {"test_write_ex_captures_first_format", test_write_ex_captures_first_format},
+    {"test_write_ex_without_format_matches_legacy", test_write_ex_without_format_matches_legacy},
+    {"test_sidecar_utf8_validation", test_sidecar_utf8_validation},
+    {"test_sidecar_json_builder", test_sidecar_json_builder},
+    {"test_sidecar_write_meta_file", test_sidecar_write_meta_file},
+    {"test_sidecar_switch_state", test_sidecar_switch_state},
+    {"test_sidecar_write_file_failure", test_sidecar_write_file_failure},
+    {"test_sidecar_lifecycle_on_real_file", test_sidecar_lifecycle_on_real_file},
+    {"test_sidecar_legacy_write_leaves_no_sidecar", test_sidecar_legacy_write_leaves_no_sidecar},
+    {"test_sidecar_disabled_metadata_leaves_no_sidecar", test_sidecar_disabled_metadata_leaves_no_sidecar},
+    {"test_sidecar_split_creates_two_sidecars", test_sidecar_split_creates_two_sidecars},
+    {"test_sidecar_rollover_creates_new_sidecar", test_sidecar_rollover_creates_new_sidecar},
+    {"test_sidecar_survives_without_stop", test_sidecar_survives_without_stop},
+    {"test_queue_allocation_failures", test_queue_allocation_failures},
+    {"test_session_allocation_failures", test_session_allocation_failures},
+    {"test_public_write_allocation_failures", test_public_write_allocation_failures},
+    {"test_writer_queue_pop_failure", test_writer_queue_pop_failure},
+    {"test_writer_queue_full_write_rejection", test_writer_queue_full_write_rejection},
+    {"test_writer_queue_full_failed_enqueue_keeps_rollover_clock", test_writer_queue_full_failed_enqueue_keeps_rollover_clock},
+    {"test_session_capacity_rejection", test_session_capacity_rejection},
+    {"test_public_write_rejects_when_session_capacity_reached", test_public_write_rejects_when_session_capacity_reached},
+    {"test_stop_while_pending_blocks", test_stop_while_pending_blocks},
+    {"test_session_helper_direct", test_session_helper_direct},
+    {"test_file_manager_direct", test_file_manager_direct},
+    {"test_file_manager_reuses_tracked_handle", test_file_manager_reuses_tracked_handle},
+    {"test_file_manager_closes_fp_when_no_free_slot", test_file_manager_closes_fp_when_no_free_slot},
+    {"test_file_manager_idle_scan_skips_inactive_slots", test_file_manager_idle_scan_skips_inactive_slots},
+    {"test_file_manager_rejects_when_full_and_no_idle_slot", test_file_manager_rejects_when_full_and_no_idle_slot},
+    {"test_file_manager_close_rejects_foreign_handle", test_file_manager_close_rejects_foreign_handle},
+    {"test_file_manager_cleanup_filters_non_pcm_files", test_file_manager_cleanup_filters_non_pcm_files},
+    {"test_get_active_sessions_argument_guards", test_get_active_sessions_argument_guards},
+    {"test_file_manager_cleanup_and_evict", test_file_manager_cleanup_and_evict},
+    {"test_file_manager_init_and_open_failures", test_file_manager_init_and_open_failures},
+    {"test_file_manager_init_creates_and_destroy_closes", test_file_manager_init_creates_and_destroy_closes},
+    {"test_file_manager_cleanup_realloc_failure", test_file_manager_cleanup_realloc_failure},
+    {"test_logger_direct", test_logger_direct},
+    {"test_init_retry_path", test_init_retry_path},
+    {"test_init_failure_path", test_init_failure_path},
+    {"test_init_do_init_failures", test_init_do_init_failures},
+    {"test_init_setclock_fallback", test_init_setclock_fallback},
+    {"test_disabled_write_has_no_side_effects", test_disabled_write_has_no_side_effects},
+    {"test_cleanup_deferred_to_writer_thread", test_cleanup_deferred_to_writer_thread},
+    {"test_runtime_controls", test_runtime_controls},
+    {"test_init_wait_path", test_init_wait_path},
+    {"test_whitebox_coverage_shim", test_whitebox_coverage_shim},
+};
+
+_Static_assert(sizeof(g_cases) / sizeof(g_cases[0]) == 66,
+               "the suite must register exactly 66 cases");
+
+int main(int argc, char **argv) {
     const char *base_dir = NULL;
+
+    iso_init((argc > 0) ? argv[0] : NULL);
+    /* Line buffered even when stdout is a pipe: the suite may die mid-run. */
+    setvbuf(stdout, NULL, _IOLBF, 0);
 
     if (getenv("AUDIO_DUMP_RUN_PTHREAD_CREATE_TEST") != NULL) {
         return run_isolated_pthread_create_failure_retry();
@@ -3452,83 +3444,24 @@ int main(void) {
 
     logger_init(pc_log_fn);
     logger_set_level(LOG_LEVEL_INFO);
-    base_dir = getenv("AUDIO_DUMP_DIR") != NULL ? getenv("AUDIO_DUMP_DIR") : "/tmp/audio_dump_test";
+    base_dir = getenv("AUDIO_DUMP_DIR") != NULL ? getenv("AUDIO_DUMP_DIR") : tp_test_root();
     strncpy(g_test_dir_base, base_dir, sizeof(g_test_dir_base) - 1);
     g_test_dir_base[sizeof(g_test_dir_base) - 1] = '\0';
     file_mgr_set_root_dir(g_test_dir_base);
-    mkdir(file_mgr_get_root_dir(), 0755);
-    setenv("AUDIO_DUMP_ENABLED", "1", 1);
+    tp_mkdir(file_mgr_get_root_dir());
+    tp_setenv("AUDIO_DUMP_ENABLED", "1");
 
     printf("========================================\n");
     printf("   PCM Dump Module Test Suite\n");
     printf("========================================\n");
 
-    test_string_key_write_and_escape();
-    test_key_validation();
-    test_argument_guard_coverage();
-    test_storage_cache_interval_hits_cached_path();
-    test_storage_cache_hits_cached_under_lock();
-    test_session_separation_and_query();
-    test_stop_then_new_session_creates_new_file();
-    test_write_gap_exactly_two_seconds_keeps_same_file();
-    test_write_gap_over_two_seconds_creates_new_file();
-    test_low_storage_latch_requires_reenable();
-    test_filename_hash_disambiguates_escaped_collisions();
-    test_same_timestamp_rollovers_get_unique_files();
-    test_storage_failure_blocks_new_session();
-    test_storage_low_storage_blocks_new_session();
-    test_storage_large_storage_reports_full_value();
-    test_queue_direct();
-    test_queue_empty_pop_and_byte_limit();
-    test_session_direct();
-    test_session_highest_generation_lookup();
-    test_session_file_action_policy();
-    test_format_validation();
-    test_write_ex_captures_first_format();
-    test_write_ex_without_format_matches_legacy();
-    test_sidecar_utf8_validation();
-    test_sidecar_json_builder();
-    test_sidecar_write_meta_file();
-    test_sidecar_switch_state();
-    test_sidecar_write_file_failure();
-    test_sidecar_lifecycle_on_real_file();
-    test_sidecar_legacy_write_leaves_no_sidecar();
-    test_sidecar_disabled_metadata_leaves_no_sidecar();
-    test_sidecar_split_creates_two_sidecars();
-    test_sidecar_rollover_creates_new_sidecar();
-    test_sidecar_survives_without_stop();
-    test_queue_allocation_failures();
-    test_session_allocation_failures();
-    test_public_write_allocation_failures();
-    test_writer_queue_pop_failure();
-    test_writer_queue_full_write_rejection();
-    test_writer_queue_full_failed_enqueue_keeps_rollover_clock();
-    test_session_capacity_rejection();
-    test_public_write_rejects_when_session_capacity_reached();
-    test_stop_while_pending_blocks();
-    test_session_helper_direct();
-    test_file_manager_direct();
-    test_file_manager_reuses_tracked_handle();
-    test_file_manager_closes_fp_when_no_free_slot();
-    test_file_manager_idle_scan_skips_inactive_slots();
-    test_file_manager_rejects_when_full_and_no_idle_slot();
-    test_file_manager_close_rejects_foreign_handle();
-    test_file_manager_cleanup_filters_non_pcm_files();
-    test_get_active_sessions_argument_guards();
-    test_file_manager_cleanup_and_evict();
-    test_file_manager_init_and_open_failures();
-    test_file_manager_init_creates_and_destroy_closes();
-    test_file_manager_cleanup_realloc_failure();
-    test_logger_direct();
-    test_init_retry_path();
-    test_init_failure_path();
-    test_init_do_init_failures();
-    test_init_setclock_fallback();
-    test_disabled_write_has_no_side_effects();
-    test_cleanup_deferred_to_writer_thread();
-    test_runtime_controls();
-    test_init_wait_path();
-    test_whitebox_coverage_shim();
+    for (size_t i = 0; i < sizeof(g_cases) / sizeof(g_cases[0]); ++i) {
+        /* Name the case before running it and flush: a crash must not swallow
+         * the only evidence of where it happened. */
+        printf("RUN:  %s\n", g_cases[i].name);
+        fflush(stdout);
+        g_cases[i].run();
+    }
 
     printf("\n========================================\n");
     printf("   Test Results\n");
@@ -3536,6 +3469,7 @@ int main(void) {
     printf("Tests Passed: %d\n", tests_passed);
     printf("Tests Failed: %d\n", tests_failed);
     printf("Total Tests:  %d\n", tests_passed + tests_failed);
+    printf("Registered:   %zu\n", sizeof(g_cases) / sizeof(g_cases[0]));
     printf("========================================\n");
 
     return tests_failed > 0 ? 1 : 0;
