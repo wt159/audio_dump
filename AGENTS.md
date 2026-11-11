@@ -13,7 +13,7 @@
 - 对这个仓库，PC 端验证顺序就是 `make` → `make run` → `make coverage`。
 
 ## Environment and CI constraints
-- This workstation has no `gcc`/`make` on PATH and `wsl.exe` is blocked, but Qt 5.14.2 ships a MinGW-w64 7.3 toolchain at `D:/Qt/Tools/mingw730_64/bin`. Use it for the Windows runtime smoke (`MINGW_BIN=/d/Qt/Tools/mingw730_64/bin sh test/run_windows_smoke.sh`); the full PC suite still needs CI or a Linux host because it uses `fork`/`exec`.
+- This workstation has no `gcc`/`make` on PATH and `wsl.exe` is blocked, but Qt 5.14.2 ships a MinGW-w64 7.3 toolchain at `D:/Qt/Tools/mingw730_64/bin`. It runs both the Windows smoke (`sh test/run_windows_smoke.sh`) and the complete 66-case suite (`sh test/run_full_windows.sh`); the harness no longer uses `fork`/`exec`, so nothing forces the suite onto Linux. `make` / `make run` / `make coverage` still need CI or a Linux host.
 - Never report a code change as locally verified unless the Windows smoke or CI actually ran.
 - `mingw-compile` is a required gate: it cross-compiles the module with mingw-w64 and must stay green. Keep the public header free of POSIX-only includes instead of widening `continue-on-error`.
 - The shell's `HTTPS_PROXY` points at `127.0.0.1:64082`, which answers `502 Bad Gateway` for `github.com:443` while `api.github.com` still works. The real client listens on `127.0.0.1:7892` (Clash mixed port), and this repository sets `http.proxy` to it. Before falling back to the API replay trick, test: `curl -s -o /dev/null -w '%{http_code}\n' --proxy http://127.0.0.1:7892 https://github.com` (expect 200).
@@ -31,6 +31,8 @@
 - PC build: `cd dump_pcm_data && make`
 - PC smoke run: `cd dump_pcm_data && make run`
 - Coverage smoke: `cd dump_pcm_data && make coverage` (this prints gcov output and still exits 0)
+- Windows full suite: `cd dump_pcm_data && sh test/run_full_windows.sh` (66 cases, native MinGW; `MINGW_BIN` overrides the toolchain, `USE_CMAKE=1` builds through CMake instead of a direct `gcc` line)
+- Windows suite through CTest: `cmake -S . -B build/win -G "MinGW Makefiles" -DDUMP_PCM_BUILD_TESTS=ON && cmake --build build/win && ctest --test-dir build/win --output-on-failure`
 - Focused PC retry check: `AUDIO_DUMP_RUN_PTHREAD_CREATE_TEST=1 ./dump_pcm_test`
 - Android build: `cd dump_pcm_data && mm`
 
@@ -49,7 +51,9 @@
 - Current file names include escaped keys, stable hash, generation, split index, and timestamp in code.
 - Low-storage handling latches until dump is toggled off and back on; do not assume space recovery alone clears it.
 - On MinGW 7.3 `pthread_condattr_setclock` rejects `CLOCK_MONOTONIC`, so the writer falls back to `CLOCK_REALTIME`; the Windows smoke asserts that path runs without failing.
-- `test/main.c` is a large PC test harness; if you change core logic, expect many assertions there.
+- `test/main.c` is a large PC test harness; if you change core logic, expect many assertions there. `test/proc_iso.c` is the only place that spawns a child process, and `test/test_plat.h` the only place with platform spellings (`mkdir`, `setenv`, the test root). A `_Static_assert` pins the case count at 66.
+- `-Wl,--wrap=` does work on MinGW PE, but three things break it silently: defining `DLL_EXPORT` (turns the winpthread declarations into `dllimport`), wrapping a call that is already resolved inside the same translation unit, and linking with `-static` (that also intercepts winpthreads' internal calls). The test target must never define `DLL_EXPORT`.
+- Isolated cases re-execute the test binary through `iso_run()`, which passes an explicit environment block rather than mutating the parent's. A spawn that cannot be waited on is reported as a failure; treating "no result" as success is how the old `fork()` code once passed a failing case.
 
 ## Keep in mind
 - Generated artifacts live under `dump_pcm_data/` and are ignored via the local `.gitignore` (`*.o`, `*.gcda`, `*.gcno`, `*.gcov`, `dump_pcm_test`).
