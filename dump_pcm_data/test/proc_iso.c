@@ -126,21 +126,26 @@ int iso_run(const char *const *env_overrides, iso_result_t *out) {
         override_count++;
     }
 
+    fprintf(stderr, "[iso] A before build_env\n");
     env = build_env(env_overrides, override_count);
+    fprintf(stderr, "[iso] B env=%p\n", (void *)env);
     if (env == NULL) {
         return -1;
     }
 
     argv[0] = g_self_path;
     argv[1] = NULL;
+    fprintf(stderr, "[iso] C self=%s\n", g_self_path);
 
 #ifdef _WIN32
     {
         /* _P_WAIT blocks and yields the exit status directly, so there is no
          * separate wait step here. */
+        fprintf(stderr, "[iso] D before spawn\n");
         intptr_t status = _spawnve(_P_WAIT, g_self_path, (const char *const *)argv,
                                    (const char *const *)env);
 
+        fprintf(stderr, "[iso] E after spawn rc=%ld\n", (long)status);
         free(env);
         if (status == -1) {
             return -1;
