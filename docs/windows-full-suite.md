@@ -12,7 +12,7 @@
 
 | 文件 | 作用 |
 |---|---|
-| `test/proc_iso.h` / `test/proc_iso.c` | 进程隔离层。`iso_run()` 以显式环境块重新执行本二进制并取回退出码；POSIX 走 `fork` + `execve` + `waitpid`，Windows 走 `_spawnve` |
+| `test/proc_iso.h` / `test/proc_iso.c` | 进程隔离层。`iso_run()` 以显式环境块重新执行本二进制并取回退出码；POSIX 走 `fork` + `execve` + `waitpid`，Windows 走 `CreateProcessA` + `WaitForSingleObject` + `GetExitCodeProcess` |
 | `test/test_plat.h` | 平台拼写差异：`tp_mkdir()`、`tp_setenv()` / `tp_unsetenv()`、`tp_test_root()`。头文件内 `static inline`，不引入额外目标文件 |
 | `test/main.c` | 15 处 `fork` → `iso_run()`；18 处 `/tmp/audio_dump_test` → `tp_test_root()`；4 处双参 `mkdir` → `tp_mkdir()`；`/dev/null/subdir` 与 `/proc` 夹具改为可移植命题；用例改为注册表并由 `_Static_assert` 钉住 66 |
 | `test/run_full_windows.sh` | 本机与 CI 的 Windows 入口，直接 `gcc` 或 `USE_CMAKE=1` |
@@ -43,6 +43,14 @@ Linux 侧仍是 `make` → `make run` → `make coverage`，行为不变，只�
 | `/dev/null/subdir` 作为不可创建的根目录 | Windows 无此语义，该字面量会变成可创建的盘符相对路径，断言直接反转 | 在测试根下建一个**普通文件**，再把它的子路径当目录。命中的是 `ensure_dir_exists()` 里 `stat` 成功但 `!S_ISDIR` 的那一行，两平台同一行 |
 | `/proc/forbidden` 期望中间层与末层 mkdir 失败，`/proc` 期望 init 成功但 open 失败 | 只有 POSIX 才有「存在但不可写」的目录，跨机器无法保证 | 前两段同样用「父路径是文件」；第三段改为 init 成功于一个可写目录、随后 `rmdir` 掉该目录，再要求 open 失败 |
 | `execl("./dump_pcm_test")` 依赖 cwd | Windows 需要绝对路径与 `.exe` | `iso_self_path()` 在 Windows 取 `GetModuleFileNameA`，POSIX 取 `argv[0]` |
+
+## 踩过的坑：为什么不是 `_spawnve`
+
+第一版用的是 CRT 的 `_spawnve(_P_WAIT, ...)`，在本机 MinGW 7.3 上 66/66 通过，在 runner 的 gcc 15.2 上却在 `_spawnve` 内部直接段错误（`RUN` 到崩溃之间只有 1 毫秒，进程根本没起来）。
+
+原因是 MinGW 把 `_spawnve` 作为**静态运行时**编进可执行文件，于是它和其他本体内代码一样，落在 `-Wl,--wrap=` 的插桩范围内。这条耦合既观察不到也控制不了：本机 binutils 2.30 下没事，2.46 下崩。
+
+换成 `CreateProcessA` + `WaitForSingleObject` + `GetExitCodeProcess` 后问题消失，而且这本来就是契约的字面表达。环境块也改为从 `GetEnvironmentStringsA()` 构造，不再依赖 CRT 的 `_environ`——同一个理由，少一层对运行时内部结构的假设。
 
 ## 刻意不做
 

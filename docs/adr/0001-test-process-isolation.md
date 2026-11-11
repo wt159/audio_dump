@@ -28,7 +28,8 @@ Three consequences worth recording, because each rejects an obvious alternative:
 1. **No fork emulation.** Every one of the 15 call sites is
    `fork → setenv → execl(self) → waitpid`; none reads the parent's memory after
    the fork. A spawn is the same thing with less machinery, and it is one
-   function call on each platform (`execve` after `fork`, `_spawnve` on Windows)
+   function call on each platform (`execve` after `fork`, `CreateProcessA` on
+   Windows)
    instead of a POSIX emulation layer nobody would trust.
 2. **Environment passed explicitly, not inherited by mutation.** `iso_run()`
    builds an environment block from `environ` with same-named entries replaced.
