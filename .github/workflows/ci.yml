@@ -49,16 +49,20 @@ jobs:
   mingw-compile:
     name: MinGW cross compile check
     runs-on: ubuntu-latest
-    # Compile-only gate for the Windows toolchain. Runtime behaviour is still
-    # covered on Linux by the fault-injection tests in dump_pcm_test.
+    # Compile-only gate for the Windows toolchain. Runtime behaviour is covered
+    # by the `windows-full-suite` job, which uses the image's own MinGW.
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # Only the C cross compiler for x86_64 is needed. The `mingw-w64`
+      # metapackage pulls both bitnesses plus the C++ front ends and their
+      # recommends - hundreds of megabytes this job never uses, on a runner
+      # whose apt mirror is not always fast.
       - name: Install MinGW toolchain
         run: |
           sudo apt-get update
-          sudo apt-get install -y mingw-w64
+          sudo apt-get install -y --no-install-recommends gcc-mingw-w64-x86-64
           x86_64-w64-mingw32-gcc --version | head -1
 
       # Compile only: no --wrap/coverage flags, no test harness, no link step.
