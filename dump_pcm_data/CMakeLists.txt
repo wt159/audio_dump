@@ -34,3 +34,49 @@ else()
     find_package(Threads REQUIRED)
     target_link_libraries(audio_dump PUBLIC Threads::Threads)
 endif()
+
+# The PC suite is the same source on every platform: it reaches Windows through
+# test/proc_iso.c (process isolation) and test/test_plat.h (POSIX spellings),
+# not through a separate harness. Off by default so consumers of the static
+# library never pay for it.
+option(DUMP_PCM_BUILD_TESTS "Build the PC test harness and register it with CTest" OFF)
+
+if(DUMP_PCM_BUILD_TESTS)
+    enable_testing()
+
+    add_executable(dump_pcm_test
+        ${AUDIO_DUMP_SOURCES}
+        test/main.c
+        test/whitebox.c
+        test/proc_iso.c)
+
+    target_include_directories(dump_pcm_test PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/test)
+
+    target_compile_features(dump_pcm_test PRIVATE c_std_11)
+    target_compile_definitions(dump_pcm_test PRIVATE DUMP_PCM_PC _POSIX_C_SOURCE=200809L)
+
+    target_link_libraries(dump_pcm_test PRIVATE audio_dump)
+
+    # Link-time fault injection. Every symbol below has to stay interceptable,
+    # so nothing here may define DLL_EXPORT: that would turn the winpthread
+    # declarations into dllimport and --wrap would stop working silently.
+    target_link_options(dump_pcm_test PRIVATE
+        -Wl,--wrap=malloc
+        -Wl,--wrap=calloc
+        -Wl,--wrap=realloc
+        -Wl,--wrap=queue_pop
+        -Wl,--wrap=pthread_mutex_init
+        -Wl,--wrap=pthread_condattr_init
+        -Wl,--wrap=pthread_condattr_setclock
+        -Wl,--wrap=pthread_cond_init
+        -Wl,--wrap=pthread_cond_timedwait
+        -Wl,--wrap=opendir)
+
+    add_test(NAME pc-suite COMMAND dump_pcm_test)
+    set_tests_properties(pc-suite PROPERTIES
+        ENVIRONMENT "AUDIO_DUMP_ENABLED=1;AUDIO_DUMP_DIR=${CMAKE_CURRENT_BINARY_DIR}/test-root"
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+endif()

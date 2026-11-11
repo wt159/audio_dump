@@ -37,12 +37,14 @@ jobs:
         working-directory: dump_pcm_data
         run: make coverage
 
-      # Verifies the CMake target, including the desktop observe opt-in.
-      - name: CMake static library
+      # Verifies the CMake target, including the desktop observe opt-in and the
+      # test target CTest registers.
+      - name: CMake static library and test target
         working-directory: dump_pcm_data
         run: |
-          cmake -S . -B build/cmake -DDUMP_PCM_DESKTOP_OBSERVE=ON
+          cmake -S . -B build/cmake -DDUMP_PCM_DESKTOP_OBSERVE=ON -DDUMP_PCM_BUILD_TESTS=ON
           cmake --build build/cmake
+          ctest --test-dir build/cmake --output-on-failure
 
   mingw-compile:
     name: MinGW cross compile check
@@ -70,3 +72,56 @@ jobs:
               -DDUMP_PCM_PC -D_POSIX_C_SOURCE=200809L \
               -c "$f" -o "build/mingw/$(basename "$f" .c).o"
           done
+
+  windows-full-suite:
+    name: Windows native full suite
+    runs-on: windows-latest
+    # The image ships MinGW-w64 15.2.0 in C:\mingw64\bin and already puts it on
+    # PATH; its MSYS2 install is an empty shell, so do not route through it.
+    # `shell: bash` resolves to Git for Windows bash, which the harness scripts
+    # need. This is the job that actually runs the 66 cases on Windows rather
+    # than merely compiling them.
+    defaults:
+      run:
+        shell: bash
+        working-directory: dump_pcm_data
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Show toolchain
+        # No pipes here: `shell: bash` implies -o pipefail, and SIGPIPE from a
+        # short-circuiting head(1) would fail the step for no reason.
+        run: |
+          gcc -dumpversion
+          bash --version | sed -n 1p
+          command -v cygpath || echo "cygpath not on PATH"
+
+      - name: Run the full suite
+        env:
+          MINGW_BIN: /c/mingw64/bin
+        run: |
+          # cygpath lives in Git\usr\bin, which the image does not put on PATH.
+          # Prepending it keeps the runner on the deterministic path branch.
+          export PATH="/c/Program Files/Git/usr/bin:$PATH"
+          sh test/run_full_windows.sh
+
+      - name: Build and run through CMake
+        env:
+          MINGW_BIN: /c/mingw64/bin
+        run: |
+          cmake -S . -B build/win-cmake -G "MinGW Makefiles" -DDUMP_PCM_BUILD_TESTS=ON
+          cmake --build build/win-cmake
+          ctest --test-dir build/win-cmake --output-on-failure
+
+      - name: Collect failure logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-full-suite-logs
+          path: |
+            dump_pcm_data/build/winfull/**
+            dump_pcm_data/build/win-cmake/CMakeFiles/CMakeOutput.log
+            dump_pcm_data/build/win-cmake/CMakeFiles/CMakeError.log
+          if-no-files-found: warn
+          retention-days: 7
