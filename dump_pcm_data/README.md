@@ -202,14 +202,39 @@ cmake --build build/cmake
 
 ## Windows 运行期验证
 
-`make run` 依赖 `fork/exec`，在 Windows 上跑不了。若需要 Windows 运行期证据（而不是只编译），用仓库自带的小 smoke：
+Windows 上现在能跑**完整**的 66 个用例，不再只是编译通过：
 
 ```bash
 cd dump_pcm_data
+MINGW_BIN=/d/Qt/Tools/mingw730_64/bin sh test/run_full_windows.sh
+```
+
+脚本用 MinGW-w64 编译模块与全部测试源码，然后在开启 dump 的状态下执行，末尾应看到 `Tests Passed: 66 / Tests Failed: 0`。加 `USE_CMAKE=1` 改走 `CMakeLists.txt`：
+
+```bash
+USE_CMAKE=1 \
+CMAKE_BIN=/d/tools/cmake-3.31.6-windows-x86_64/bin/cmake.exe \
+MINGW_BIN=/d/Qt/Tools/mingw730_64/bin \
+sh test/run_full_windows.sh
+```
+
+也可以把测试目标交给 CMake 与 CTest（两平台通用）：
+
+```bash
+cmake -S . -B build/win -G "MinGW Makefiles" -DDUMP_PCM_BUILD_TESTS=ON
+cmake --build build/win
+ctest --test-dir build/win --output-on-failure
+```
+
+`make run` 的 `fork/exec` 已经不再是问题：需要干净进程的用例统一走 `test/proc_iso.c`（POSIX 用 `fork` + `execve`，Windows 用 `CreateProcessA`）。`make` 本身仍依赖 POSIX 工具，所以 Windows 上用上面两条命令而不是 `make run`。
+
+另有一个十秒级的快速冒烟，不依赖测试夹具，覆盖 Windows 专有的运行期路径：
+
+```bash
 MINGW_BIN=/d/Qt/Tools/mingw730_64/bin sh test/run_windows_smoke.sh
 ```
 
-脚本用 MinGW-w64 编译全部源码与 `test/windows_smoke.c`，然后真实执行，覆盖：
+它覆盖：
 
 - `_mkdir` 逐级建目录，以及反斜杠路径归一化
 - `GetDiskFreeSpaceExA` 的可用空间探测（断言高于 500 MiB 阈值）
@@ -217,16 +242,7 @@ MINGW_BIN=/d/Qt/Tools/mingw730_64/bin sh test/run_windows_smoke.sh
 - sidecar 的 `MoveFileExA` 原子替换与 `complete` / `total_bytes`
 - 初始化后再调 `dump_pcm_set_root_dir()` 被拒绝
 
-`MINGW_BIN` 指向带 winpthreads 的工具链目录；默认取本机的 `D:/Qt/Tools/mingw730_64/bin`。
-
-加 `USE_CMAKE=1` 可改为走 `CMakeLists.txt` 构建并链接生成的静态库，这样 Windows 上的 CMake 目标也一并得到验证：
-
-```bash
-USE_CMAKE=1 \
-CMAKE_BIN=/d/tools/cmake-3.31.6-windows-x86_64/bin/cmake.exe \
-MINGW_BIN=/d/Qt/Tools/mingw730_64/bin \
-sh test/run_windows_smoke.sh
-```
+`MINGW_BIN` 指向带 winpthreads 的工具链目录；默认取本机的 `D:/Qt/Tools/mingw730_64/bin`。全量套件挂了时先跑它，可以快速区分是模块坏了还是夹具坏了。
 
 ## Android 编译
 
