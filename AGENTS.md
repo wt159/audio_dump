@@ -13,7 +13,8 @@
 - 对这个仓库，PC 端验证顺序就是 `make` → `make run` → `make coverage`。
 
 ## Environment and CI constraints
-- This workstation has no C toolchain: `gcc`, `make`, `cc` and `gcov` are absent, and `wsl.exe` is blocked by the sandbox policy. Never report a code change as locally verified; run the three steps on the CI `pc-verify` job or on a Linux host.
+- This workstation has no `gcc`/`make` on PATH and `wsl.exe` is blocked, but Qt 5.14.2 ships a MinGW-w64 7.3 toolchain at `D:/Qt/Tools/mingw730_64/bin`. Use it for the Windows runtime smoke (`MINGW_BIN=/d/Qt/Tools/mingw730_64/bin sh test/run_windows_smoke.sh`); the full PC suite still needs CI or a Linux host because it uses `fork`/`exec`.
+- Never report a code change as locally verified unless the Windows smoke or CI actually ran.
 - `mingw-compile` is a required gate: it cross-compiles the module with mingw-w64 and must stay green. Keep the public header free of POSIX-only includes instead of widening `continue-on-error`.
 - When `github.com:443` is unreachable (`CONNECT tunnel failed, response 502`, `Empty reply from server`, or a timeout) but `api.github.com` still answers, push by replaying commits through the Git Data API: `POST /git/trees` with `base_tree`, `POST /git/commits`, then `POST` or `PATCH /git/refs`, and open the PR with `gh pr create`.
 - Replayed commits get new SHAs, so local and remote branches diverge even when the content matches. Reconcile with `git fetch && git reset --hard origin/main` once the network recovers; never push a diverged branch.
@@ -46,6 +47,7 @@
 - `src/dump_pcm_data.c` is the runtime core: lazy singleton init, one writer thread, shared queue, session tracking, and file management.
 - Current file names include escaped keys, stable hash, generation, split index, and timestamp in code.
 - Low-storage handling latches until dump is toggled off and back on; do not assume space recovery alone clears it.
+- On MinGW 7.3 `pthread_condattr_setclock` rejects `CLOCK_MONOTONIC`, so the writer falls back to `CLOCK_REALTIME`; the Windows smoke asserts that path runs without failing.
 - `test/main.c` is a large PC test harness; if you change core logic, expect many assertions there.
 
 ## Keep in mind

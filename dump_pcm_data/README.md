@@ -200,6 +200,25 @@ cmake --build build/cmake
 - `make coverage` 会运行测试并打印 gcov 汇总，命令本身固定以 0 退出。
 - 如果只想复现某些隔离测试，可直接运行 `dump_pcm_test` 并配合对应环境变量。
 
+## Windows 运行期验证
+
+`make run` 依赖 `fork/exec`，在 Windows 上跑不了。若需要 Windows 运行期证据（而不是只编译），用仓库自带的小 smoke：
+
+```bash
+cd dump_pcm_data
+MINGW_BIN=/d/Qt/Tools/mingw730_64/bin sh test/run_windows_smoke.sh
+```
+
+脚本用 MinGW-w64 编译全部源码与 `test/windows_smoke.c`，然后真实执行，覆盖：
+
+- `_mkdir` 逐级建目录，以及反斜杠路径归一化
+- `GetDiskFreeSpaceExA` 的可用空间探测（断言高于 500 MiB 阈值）
+- 写线程、会话创建与文件落盘
+- sidecar 的 `MoveFileExA` 原子替换与 `complete` / `total_bytes`
+- 初始化后再调 `dump_pcm_set_root_dir()` 被拒绝
+
+`MINGW_BIN` 指向带 winpthreads 的工具链目录；默认取本机的 `D:/Qt/Tools/mingw730_64/bin`。
+
 ## Android 编译
 
 ```bash
