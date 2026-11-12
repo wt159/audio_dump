@@ -3405,6 +3405,83 @@ static void test_whitebox_coverage_shim(void) {
     pass(name);
 }
 
+static void set_file_age(const char *path, long seconds) {
+    struct utimbuf times;
+
+    times.actime = time(NULL) - seconds;
+    times.modtime = times.actime;
+    utime(path, &times);
+}
+
+static int count_files_beginning_with(const char *prefix) {
+    DIR *dir = opendir(file_mgr_get_root_dir());
+    struct dirent *entry = NULL;
+    size_t prefix_len = strlen(prefix);
+    int count = 0;
+
+    if (dir == NULL) {
+        return -1;
+    }
+    while ((entry = readdir(dir)) != NULL) {
+        if (strncmp(entry->d_name, prefix, prefix_len) == 0) {
+            count++;
+        }
+    }
+    closedir(dir);
+    return count;
+}
+
+/* An audio HAL is a long-lived process. Applying the retention bound only when
+ * the writer thread starts means files that cross the seven-day line while the
+ * process runs are never pruned. */
+static void test_retention_reapplies_within_one_process(void) {
+    const char *name = "retention re-applies within one process";
+    const long past_the_window = 8L * 24L * 3600L;
+    char path[512] = {0};
+    char key2[16] = {0};
+
+    reset_test_dir();
+    /* Initialises the module: the sweep triggered here has nothing to prune, and
+     * everything below happens in the same process. */
+    dump_pcm_data_write("x", 1, "ret", "seed");
+    stop_and_wait("ret", "seed");
+
+    for (int i = 0; i < 105; ++i) {
+        FILE *fp = NULL;
+
+        snprintf(path, sizeof(path), "%sold_%03d.pcm", file_mgr_get_root_dir(), i);
+        fp = fopen(path, "wb");
+        if (fp == NULL) {
+            fail(name, "could not plant an old file");
+            return;
+        }
+        fclose(fp);
+        set_file_age(path, past_the_window);
+    }
+
+    if (count_files_beginning_with("old_") != 105) {
+        fail(name, "planted files are not all present");
+        return;
+    }
+
+    /* The sweep is driven by completed sessions, so a bounded number of them
+     * has to reach it. Eight is the writer's interval. */
+    for (int i = 0; i < 8; ++i) {
+        snprintf(key2, sizeof(key2), "s%d", i);
+        dump_pcm_data_write("x", 1, "ret", key2);
+        stop_and_wait("ret", key2);
+    }
+    /* Let the writer thread wake, notice, and sweep. */
+    usleep(300000);
+
+    if (count_files_beginning_with("old_") > 100) {
+        fail(name, "old files survived a whole process lifetime");
+        return;
+    }
+
+    pass(name);
+}
+
 /* A table rather than a call list: the harness can then assert on the count,
  * and dropping a case during a refactor becomes a build error instead of a
  * quietly shorter run. */
@@ -3480,9 +3557,11 @@ static const test_case_t g_cases[] = {
     {"test_runtime_controls", test_runtime_controls},
     {"test_init_wait_path", test_init_wait_path},
     {"test_whitebox_coverage_shim", test_whitebox_coverage_shim},
+    {"test_retention_reapplies_within_one_process",
+     test_retention_reapplies_within_one_process},
 };
 
-_Static_assert(sizeof(g_cases) / sizeof(g_cases[0]) == 66,
+_Static_assert(sizeof(g_cases) / sizeof(g_cases[0]) == 67,
                "the suite must register exactly 66 cases");
 
 int main(int argc, char **argv) {

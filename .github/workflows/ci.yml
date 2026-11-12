@@ -95,7 +95,7 @@ jobs:
     # The image ships MinGW-w64 15.2.0 in C:\mingw64\bin and already puts it on
     # PATH; its MSYS2 install is an empty shell, so do not route through it.
     # `shell: bash` resolves to Git for Windows bash, which the harness scripts
-    # need. This is the job that actually runs the 66 cases on Windows rather
+    # need. This is the job that actually runs the whole suite on Windows rather
     # than merely compiling them.
     defaults:
       run:
