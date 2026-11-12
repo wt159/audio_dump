@@ -1,0 +1,95 @@
+'import sitecustomize' failed; use -v for traceback
+[New Thread 42996.0x27a8]
+[New Thread 42996.0x2d7c]
+[New Thread 42996.0xb7b8]
+[New Thread 42996.0x2614]
+[New Thread 42996.0xa830]
+[New Thread 42996.0x98f0]
+[New Thread 42996.0x98ac]
+  Id   Target Id         Frame
+  1    Thread 42996.0x27a8 0x00007ffae972dc24 in ntdll!ZwDelayExecution () from C:\WINDOWS\SYSTEM32\ntdll.dll
+  2    Thread 42996.0x2d7c 0x00007ffae9731034 in ntdll!ZwWaitForWorkViaWorkerFactory () from C:\WINDOWS\SYSTEM32\ntdll.dll
+  3    Thread 42996.0xb7b8 0x00007ffae9731034 in ntdll!ZwWaitForWorkViaWorkerFactory () from C:\WINDOWS\SYSTEM32\ntdll.dll
+  4    Thread 42996.0x2614 0x00007ffae972d624 in ntdll!ZwWaitForSingleObject () from C:\WINDOWS\SYSTEM32\ntdll.dll
+  5    Thread 42996.0xa830 0x00007ffae972d624 in ntdll!ZwWaitForSingleObject () from C:\WINDOWS\SYSTEM32\ntdll.dll
+  6    Thread 42996.0x98f0 0x00007ffae972d624 in ntdll!ZwWaitForSingleObject () from C:\WINDOWS\SYSTEM32\ntdll.dll
+* 7    Thread 42996.0x98ac 0x00007ffae97310d1 in ntdll!DbgBreakPoint () from C:\WINDOWS\SYSTEM32\ntdll.dll
+
+Thread 7 (Thread 42996.0x98ac):
+#0  0x00007ffae97310d1 in ntdll!DbgBreakPoint () from C:\WINDOWS\SYSTEM32\ntdll.dll
+#1  0x00007ffae975cb3e in ntdll!DbgUiRemoteBreakin () from C:\WINDOWS\SYSTEM32\ntdll.dll
+#2  0x00007ffae76c7374 in KERNEL32!BaseThreadInitThunk () from C:\WINDOWS\System32\kernel32.dll
+#3  0x00007ffae96dcc91 in ntdll!RtlUserThreadStart () from C:\WINDOWS\SYSTEM32\ntdll.dll
+#4  0x0000000000000000 in ?? ()
+Backtrace stopped: previous frame inner to this frame (corrupt stack?)
+
+Thread 6 (Thread 42996.0x98f0):
+#0  0x00007ffae972d624 in ntdll!ZwWaitForSingleObject () from C:\WINDOWS\SYSTEM32\ntdll.dll
+#1  0x00007ffae6e8b6ae in WaitForSingleObjectEx () from C:\WINDOWS\System32\KernelBase.dll
+#2  0x00007ffadf943932 in ?? () from E:\progarm files\workbuddy\resources\vendor\PortableGit\mingw64\bin\libwinpthread-1.dll
+#3  0x000000000040766f in __wrap_pthread_mutex_lock (mutex=0x410060 <g_file_mgr_mutex>) at build/stage2/probe.c:118
+#4  0x0000000000406b2b in file_mgr_is_tracking (mgr=0x4150b8 <g_ctx+120>, fp=0x7ffae914fa90 <msvcrt!_iob+144>) at build/stage2/../../src/file_mgr.c:508
+#5  0x00000000004078cd in __wrap_file_mgr_is_tracking (mgr=0x4150b8 <g_ctx+120>, fp=0x7ffae914fa90 <msvcrt!_iob+144>) at build/stage2/probe.c:165
+#6  0x0000000000402d61 in close_session_file_locked (session=0xd8eb20) at src/dump_writer.c:24
+#7  0x0000000000402db5 in destroy_session_locked (session=0xd8eb20) at src/dump_writer.c:35
+#8  0x0000000000402e1d in stop_session_locked (session=0xd8eb20) at src/dump_writer.c:50
+#9  0x0000000000402b23 in dump_pcm_data_stop (key1=0x411a56 <T_NAME+214> "mixer", key2=0x411a50 <T_NAME+208> "probe") at src/dump_pcm_data.c:287
+#10 0x0000000000407c53 in session_thread (arg=0x0) at build/stage2/probe.c:225
+#11 0x00007ffadf946ced in ?? () from E:\progarm files\workbuddy\resources\vendor\PortableGit\mingw64\bin\libwinpthread-1.dll
+#12 0x00007ffae90faf5a in msvcrt!_beginthreadex () from C:\WINDOWS\System32\msvcrt.dll
+#13 0x00007ffae90fb02c in msvcrt!_endthreadex () from C:\WINDOWS\System32\msvcrt.dll
+#14 0x00007ffae76c7374 in KERNEL32!BaseThreadInitThunk () from C:\WINDOWS\System32\kernel32.dll
+#15 0x00007ffae96dcc91 in ntdll!RtlUserThreadStart () from C:\WINDOWS\SYSTEM32\ntdll.dll
+#16 0x0000000000000000 in ?? ()
+Backtrace stopped: previous frame inner to this frame (corrupt stack?)
+
+Thread 5 (Thread 42996.0xa830):
+#0  0x00007ffae972d624 in ntdll!ZwWaitForSingleObject () from C:\WINDOWS\SYSTEM32\ntdll.dll
+#1  0x00007ffae6e8b6ae in WaitForSingleObjectEx () from C:\WINDOWS\System32\KernelBase.dll
+#2  0x00007ffadf943932 in ?? () from E:\progarm files\workbuddy\resources\vendor\PortableGit\mingw64\bin\libwinpthread-1.dll
+#3  0x000000000040766f in __wrap_pthread_mutex_lock (mutex=0x415040 <g_ctx>) at build/stage2/probe.c:118
+#4  0x0000000000407e64 in stage2_writer (arg=0x0) at build/stage2/probe.c:263
+#5  0x00007ffadf946ced in ?? () from E:\progarm files\workbuddy\resources\vendor\PortableGit\mingw64\bin\libwinpthread-1.dll
+#6  0x00007ffae90faf5a in msvcrt!_beginthreadex () from C:\WINDOWS\System32\msvcrt.dll
+#7  0x00007ffae90fb02c in msvcrt!_endthreadex () from C:\WINDOWS\System32\msvcrt.dll
+#8  0x00007ffae76c7374 in KERNEL32!BaseThreadInitThunk () from C:\WINDOWS\System32\kernel32.dll
+#9  0x00007ffae96dcc91 in ntdll!RtlUserThreadStart () from C:\WINDOWS\SYSTEM32\ntdll.dll
+#10 0x0000000000000000 in ?? ()
+Backtrace stopped: previous frame inner to this frame (corrupt stack?)
+
+Thread 4 (Thread 42996.0x2614):
+#0  0x00007ffae972d624 in ntdll!ZwWaitForSingleObject () from C:\WINDOWS\SYSTEM32\ntdll.dll
+#1  0x00007ffae6e8b6ae in WaitForSingleObjectEx () from C:\WINDOWS\System32\KernelBase.dll
+#2  0x00007ffadf943932 in ?? () from E:\progarm files\workbuddy\resources\vendor\PortableGit\mingw64\bin\libwinpthread-1.dll
+#3  0x00007ffadf942b3b in ?? () from E:\progarm files\workbuddy\resources\vendor\PortableGit\mingw64\bin\libwinpthread-1.dll
+#4  0x00007ffadf943049 in ?? () from E:\progarm files\workbuddy\resources\vendor\PortableGit\mingw64\bin\libwinpthread-1.dll
+#5  0x0000000000402fbb in writer_thread_func (arg=0x0) at src/dump_writer.c:102
+#6  0x00007ffadf946ced in ?? () from E:\progarm files\workbuddy\resources\vendor\PortableGit\mingw64\bin\libwinpthread-1.dll
+#7  0x00007ffae90faf5a in msvcrt!_beginthreadex () from C:\WINDOWS\System32\msvcrt.dll
+#8  0x00007ffae90fb02c in msvcrt!_endthreadex () from C:\WINDOWS\System32\msvcrt.dll
+#9  0x00007ffae76c7374 in KERNEL32!BaseThreadInitThunk () from C:\WINDOWS\System32\kernel32.dll
+#10 0x00007ffae96dcc91 in ntdll!RtlUserThreadStart () from C:\WINDOWS\SYSTEM32\ntdll.dll
+#11 0x0000000000000000 in ?? ()
+Backtrace stopped: previous frame inner to this frame (corrupt stack?)
+
+Thread 3 (Thread 42996.0xb7b8):
+#0  0x00007ffae9731034 in ntdll!ZwWaitForWorkViaWorkerFactory () from C:\WINDOWS\SYSTEM32\ntdll.dll
+#1  0x00007ffae96dd407 in ntdll!TpReleaseCleanupGroupMembers () from C:\WINDOWS\SYSTEM32\ntdll.dll
+#2  0x00007ffae76c7374 in KERNEL32!BaseThreadInitThunk () from C:\WINDOWS\System32\kernel32.dll
+#3  0x00007ffae96dcc91 in ntdll!RtlUserThreadStart () from C:\WINDOWS\SYSTEM32\ntdll.dll
+#4  0x0000000000000000 in ?? ()
+Backtrace stopped: previous frame inner to this frame (corrupt stack?)
+
+Thread 2 (Thread 42996.0x2d7c):
+#0  0x00007ffae9731034 in ntdll!ZwWaitForWorkViaWorkerFactory () from C:\WINDOWS\SYSTEM32\ntdll.dll
+#1  0x00007ffae96dd407 in ntdll!TpReleaseCleanupGroupMembers () from C:\WINDOWS\SYSTEM32\ntdll.dll
+#2  0x00007ffae76c7374 in KERNEL32!BaseThreadInitThunk () from C:\WINDOWS\System32\kernel32.dll
+#3  0x00007ffae96dcc91 in ntdll!RtlUserThreadStart () from C:\WINDOWS\SYSTEM32\ntdll.dll
+#4  0x0000000000000000 in ?? ()
+Backtrace stopped: previous frame inner to this frame (corrupt stack?)
+
+Thread 1 (Thread 42996.0x27a8):
+#0  0x00007ffae972dc24 in ntdll!ZwDelayExecution () from C:\WINDOWS\SYSTEM32\ntdll.dll
+#1  0x00007ffae6eb62ce in SleepEx () from C:\WINDOWS\System32\KernelBase.dll
+#2  0x000000000040a29c in usleep ()
+#3  0x0000000000408716 in main (argc=2, argv=0xd8e120) at build/stage2/probe.c:433

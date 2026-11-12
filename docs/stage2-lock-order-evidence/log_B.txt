@@ -1,0 +1,44 @@
+variant=B  F=0000000000410060  C=0000000000415040  PID=11840
+[INFO][AudioHALPcmDump] Initializing dump module
+[WARN][AudioHALPcmDump] Condition variable clock: CLOCK_MONOTONIC unsupported, falling back to CLOCK_REALTIME
+[INFO][AudioHALPcmDump] Dump module initialized
+[INFO][AudioHALPcmDump] Storage available: dir=D:/workspace/audio_dump/dump_pcm_data/build/stage2/root/ available=325917 MB threshold=500 MB
+[INFO][AudioHALPcmDump] Session created: key1=mixer key2=probe generation=1
+[INFO][AudioHALPcmDump] Start dump session: key1=mixer key2=probe gen=1
+[INFO][AudioHALPcmDump] File opened: D:/workspace/audio_dump/dump_pcm_data/build/stage2/root/mixer_probe_1220d37b_1_0_20261112_214455_967.pcm
+warmup: session has live fp=1
+[trace] main: before get_status(s0)
+[trace] main: after get_status(s0), before threads
+[trace] writer: step1 take C
+[trace] writer: step1 got C
+[trace] writer: step2 open under F
+[shim] open_hold_F: taking F
+[shim] open_hold_F: got F, calling fopen
+[shim] open_hold_F: fopen returned 00007ffae914fac0
+[trace] writer: step2 fopen returned fp=00007ffae914fac0
+[trace] writer: at P1 (holds F)
+[trace] session: before stop()
+[INFO][AudioHALPcmDump] Stop dump session: key1=mixer key2=probe
+[AT BARRIER (stop holds C, writer holds F; neither waits yet)]
+  main     holds=-        waits=-
+  session  holds=C        waits=-
+  writer   holds=F        waits=-
+  ABBA(C<->F)=no  session_done=0 writer_done=0 caller_done=0
+[trace] writer: step3a drop F
+[trace] writer: step3b take C to publish
+[INFO][AudioHALPcmDump] File closed: D:/workspace/audio_dump/dump_pcm_data/build/stage2/root/mixer_probe_1220d37b_1_0_20261112_214455_967.pcm
+[INFO][AudioHALPcmDump] Session destroyed
+[trace] session: after stop()
+[trace] writer: step3b got C
+[AFTER RELEASE (lock attribution, not timing)]
+  main     holds=-        waits=-
+  session  holds=-        waits=-
+  writer   holds=-        waits=-
+  ABBA(C<->F)=no  session_done=1 writer_done=1 caller_done=0
+GDB_READY pid=11840
+[VARIANT B / settled]
+  main     holds=-        waits=-
+  session  holds=-        waits=-
+  writer   holds=-        waits=-
+  ABBA(C<->F)=no  session_done=1 writer_done=1 caller_done=0
+variant B -> no ABBA, both threads completed
