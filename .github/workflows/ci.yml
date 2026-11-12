@@ -111,6 +111,40 @@ jobs:
           export PATH="/c/Program Files/Git/usr/bin:$PATH"
           sh test/run_full_windows.sh
 
+      # The fixture latch is only worth having if something checks it. A root
+      # that cannot be created must turn most of the suite red; if it ever goes
+      # green, reset_test_dir() and pass() stopped talking to each other and
+      # every case in the suite can report PASS without observing anything.
+      #
+      # Same binary as the run above, so this costs no rebuild. It is slow on
+      # purpose: with an unusable root most cases walk their retry/backoff
+      # paths, which is exactly the behaviour being asserted.
+      - name: Negative control - an unusable root must fail the suite
+        timeout-minutes: 6
+        run: |
+          mkdir -p build/negctl
+          : > build/negctl/blocker
+          root="$(cygpath -m "$(pwd)/build/negctl")"
+
+          set +e
+          AUDIO_DUMP_ENABLED=1 AUDIO_DUMP_DIR="$root/blocker/sub" \
+            build/winfull/dump_pcm_test.exe > build/negctl/out.log 2>&1
+          rc=$?
+          set -e
+
+          fails=$(grep -c '^FAIL:' build/negctl/out.log || true)
+          passes=$(grep -c '^PASS:' build/negctl/out.log || true)
+          printf 'exit=%s fails=%s passes=%s\n' "$rc" "$fails" "$passes"
+
+          if [ "$rc" -eq 0 ]; then
+            echo "::error::the suite passed against an unusable root - the fixture latch regressed"
+            exit 1
+          fi
+          if [ "$fails" -lt 40 ]; then
+            echo "::error::only $fails cases failed; the suite died early instead of asserting"
+            exit 1
+          fi
+
       - name: Build and run through CMake
         env:
           MINGW_BIN: /c/mingw64/bin
