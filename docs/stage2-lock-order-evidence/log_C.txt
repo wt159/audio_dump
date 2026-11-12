@@ -1,0 +1,90 @@
+variant=C  F=0000000000410060  C=0000000000415040  PID=39300
+[INFO][AudioHALPcmDump] Initializing dump module
+[WARN][AudioHALPcmDump] Condition variable clock: CLOCK_MONOTONIC unsupported, falling back to CLOCK_REALTIME
+[INFO][AudioHALPcmDump] Dump module initialized
+[INFO][AudioHALPcmDump] Storage available: dir=D:/workspace/audio_dump/dump_pcm_data/build/stage2/root/ available=325917 MB threshold=500 MB
+[INFO][AudioHALPcmDump] Session created: key1=mixer key2=probe generation=1
+[INFO][AudioHALPcmDump] Start dump session: key1=mixer key2=probe gen=1
+[INFO][AudioHALPcmDump] File opened: D:/workspace/audio_dump/dump_pcm_data/build/stage2/root/mixer_probe_1220d37b_1_0_20261112_214646_385.pcm
+warmup: session has live fp=1
+[trace] main: before get_status(s0)
+[trace] main: after get_status(s0), before threads
+[trace] writer: step1 take C
+[trace] writer: step1 got C
+[trace] writer: step2 open under F
+[shim] open_hold_F: taking F
+[shim] open_hold_F: got F, calling fopen
+[shim] open_hold_F: fopen returned 00007ffae914fac0
+[trace] writer: step2 fopen returned fp=00007ffae914fac0
+[trace] writer: step3a drop F
+[trace] writer: step3b take C to publish
+[trace] session: before stop()
+[trace] writer: step3b got C
+[INFO][AudioHALPcmDump] Stop dump session: key1=mixer key2=probe
+[INFO][AudioHALPcmDump] File closed: D:/workspace/audio_dump/dump_pcm_data/build/stage2/root/mixer_probe_1220d37b_1_0_20261112_214646_385.pcm
+[INFO][AudioHALPcmDump] Session destroyed
+[trace] session: after stop()
+[INFO][AudioHALPcmDump] Session created: key1=mixer key2=out generation=2
+[INFO][AudioHALPcmDump] Start dump session: key1=mixer key2=out gen=2
+[INFO][AudioHALPcmDump] File opened: D:/workspace/audio_dump/dump_pcm_data/build/stage2/root/mixer_out_d1722c71_2_0_20261112_214646_689.pcm
+[INFO][AudioHALPcmDump] Stop dump session: key1=mixer key2=out
+[INFO][AudioHALPcmDump] Session stopping: key1=mixer key2=out
+[INFO][AudioHALPcmDump] Session created: key1=mixer key2=out generation=3
+[INFO][AudioHALPcmDump] Start dump session: key1=mixer key2=out gen=3
+[INFO][AudioHALPcmDump] File closed: D:/workspace/audio_dump/dump_pcm_data/build/stage2/root/mixer_out_d1722c71_2_0_20261112_214646_689.pcm
+[INFO][AudioHALPcmDump] Session destroyed
+[INFO][AudioHALPcmDump] File opened: D:/workspace/audio_dump/dump_pcm_data/build/stage2/root/mixer_out_d1722c71_3_0_20261112_214646_749.pcm
+[INFO][AudioHALPcmDump] Stop dump session: key1=mixer key2=out
+[INFO][AudioHALPcmDump] Session stopping: key1=mixer key2=out
+[INFO][AudioHALPcmDump] Session created: key1=mixer key2=out generation=4
+[INFO][AudioHALPcmDump] Start dump session: key1=mixer key2=out gen=4
+[INFO][AudioHALPcmDump] File closed: D:/workspace/audio_dump/dump_pcm_data/build/stage2/root/mixer_out_d1722c71_3_0_20261112_214646_749.pcm
+[INFO][AudioHALPcmDump] Session destroyed
+[INFO][AudioHALPcmDump] File opened: D:/workspace/audio_dump/dump_pcm_data/build/stage2/root/mixer_out_d1722c71_4_0_20261112_214646_811.pcm
+[INFO][AudioHALPcmDump] Stop dump session: key1=mixer key2=out
+[INFO][AudioHALPcmDump] Session stopping: key1=mixer key2=out
+[INFO][AudioHALPcmDump] Session created: key1=mixer key2=out generation=5
+[INFO][AudioHALPcmDump] Start dump session: key1=mixer key2=out gen=5
+[INFO][AudioHALPcmDump] File closed: D:/workspace/audio_dump/dump_pcm_data/build/stage2/root/mixer_out_d1722c71_4_0_20261112_214646_811.pcm
+[INFO][AudioHALPcmDump] Session destroyed
+[INFO][AudioHALPcmDump] File opened: D:/workspace/audio_dump/dump_pcm_data/build/stage2/root/mixer_out_d1722c71_5_0_20261112_214646_873.pcm
+[INFO][AudioHALPcmDump] Stop dump session: key1=mixer key2=out
+[INFO][AudioHALPcmDump] Session stopping: key1=mixer key2=out
+[INFO][AudioHALPcmDump] Session created: key1=mixer key2=out generation=6
+[INFO][AudioHALPcmDump] Start dump session: key1=mixer key2=out gen=6
+[INFO][AudioHALPcmDump] File closed: D:/workspace/audio_dump/dump_pcm_data/build/stage2/root/mixer_out_d1722c71_5_0_20261112_214646_873.pcm
+[INFO][AudioHALPcmDump] Session destroyed
+[INFO][AudioHALPcmDump] File opened: D:/workspace/audio_dump/dump_pcm_data/build/stage2/root/mixer_out_d1722c71_6_0_20261112_214646_933.pcm
+[INFO][AudioHALPcmDump] Stop dump session: key1=mixer key2=out
+[INFO][AudioHALPcmDump] Session stopping: key1=mixer key2=out
+[INFO][AudioHALPcmDump] Session created: key1=mixer key2=out generation=7
+[INFO][AudioHALPcmDump] Start dump session: key1=mixer key2=out gen=7
+[INFO][AudioHALPcmDump] File closed: D:/workspace/audio_dump/dump_pcm_data/build/stage2/root/mixer_out_d1722c71_6_0_20261112_214646_933.pcm
+[INFO][AudioHALPcmDump] Session destroyed
+[INFO][AudioHALPcmDump] File opened: D:/workspace/audio_dump/dump_pcm_data/build/stage2/root/mixer_out_d1722c71_7_0_20261112_214646_995.pcm
+[INFO][AudioHALPcmDump] Stop dump session: key1=mixer key2=out
+[INFO][AudioHALPcmDump] Session stopping: key1=mixer key2=out
+[INFO][AudioHALPcmDump] Session created: key1=mixer key2=out generation=8
+[INFO][AudioHALPcmDump] Start dump session: key1=mixer key2=out gen=8
+[INFO][AudioHALPcmDump] File closed: D:/workspace/audio_dump/dump_pcm_data/build/stage2/root/mixer_out_d1722c71_7_0_20261112_214646_995.pcm
+[INFO][AudioHALPcmDump] Session destroyed
+[INFO][AudioHALPcmDump] File opened: D:/workspace/audio_dump/dump_pcm_data/build/stage2/root/mixer_out_d1722c71_8_0_20261112_214647_056.pcm
+[INFO][AudioHALPcmDump] Stop dump session: key1=mixer key2=out
+[INFO][AudioHALPcmDump] Session stopping: key1=mixer key2=out
+[INFO][AudioHALPcmDump] Session created: key1=mixer key2=out generation=9
+[INFO][AudioHALPcmDump] Start dump session: key1=mixer key2=out gen=9
+[INFO][AudioHALPcmDump] File closed: D:/workspace/audio_dump/dump_pcm_data/build/stage2/root/mixer_out_d1722c71_8_0_20261112_214647_056.pcm
+[INFO][AudioHALPcmDump] Session destroyed
+[VARIANT C / no barrier, sidecar-only 20 ms injection]
+  main     holds=-        waits=-
+  session  holds=-        waits=-
+  writer   holds=-        waits=-
+  caller   holds=-        waits=-
+  ABBA(C<->F)=no  session_done=1 writer_done=1 caller_done=1
+variant C -> caller max 61234 us, dropped 67, caller_done=1
+[VARIANT C / final]
+  main     holds=-        waits=-
+  session  holds=-        waits=-
+  writer   holds=-        waits=-
+  caller   holds=-        waits=-
+  ABBA(C<->F)=no  session_done=1 writer_done=1 caller_done=1
