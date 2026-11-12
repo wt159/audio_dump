@@ -38,13 +38,14 @@ static int g_test_dir_seq = 0;
  * report PASS for having observed nothing.
  *
  * Measured with a root whose parent is a regular file, so no case can create
- * its directory: 45 of 66 previously-plausible cases now fail, and 21 still
- * pass. Sixteen of those never touch the filesystem. Four assert the *absence*
- * of a side effect - `init retry path`, `init failure path`,
- * `init do_init failures`, `disabled write has no side effects` - and cannot
- * tell "nothing happened" from "nothing could happen"; they only stay honest
- * because a broken root turns most of the suite red first. Do not read their
- * PASS as evidence that the mechanism under test ran. */
+ * its directory: 46 of 66 fail and 20 still pass. Sixteen of those never touch
+ * the filesystem; one asserts that a write to an unusable path fails, which a
+ * broken root only makes more true. The remaining three assert the *absence*
+ * of a side effect - `init failure path`, `init do_init failures`,
+ * `disabled write has no side effects` - and cannot tell "nothing happened"
+ * from "nothing could happen". They stay honest only because a broken root
+ * turns most of the suite red first. Do not read their PASS as evidence that
+ * the mechanism under test ran. */
 static const char *g_fixture_error = NULL;
 
 static void pc_log_fn(log_level_t level, const char *tag, const char *fmt, ...) {
@@ -3422,6 +3423,15 @@ int main(int argc, char **argv) {
     iso_init((argc > 0) ? argv[0] : NULL);
     /* Line buffered even when stdout is a pipe: the suite may die mid-run. */
     setvbuf(stdout, NULL, _IOLBF, 0);
+
+    /* Point the module at the suite's scratch root before anything else. The
+     * isolated branches below return from main() before the parent's own setup,
+     * so without this a child falls back to the module's compiled-in default
+     * (/tmp/audio_dump_test) and writes outside the directory the parent
+     * prepared - which also made those cases immune to AUDIO_DUMP_DIR. A
+     * not-yet-initialised module accepts the root; an already-initialised one
+     * ignores it, which is why this has to be first. */
+    file_mgr_set_root_dir(tp_test_root());
 
     if (getenv("AUDIO_DUMP_RUN_PTHREAD_CREATE_TEST") != NULL) {
         return run_isolated_pthread_create_failure_retry();
