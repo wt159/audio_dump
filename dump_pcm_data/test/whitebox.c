@@ -27,6 +27,16 @@
 #define file_mgr_set_fwrite_fn_for_test file_mgr_set_fwrite_fn_for_test__whitebox
 #define file_mgr_set_fflush_fn_for_test file_mgr_set_fflush_fn_for_test__whitebox
 #define file_mgr_set_timestamp_override_for_test file_mgr_set_timestamp_override_for_test__whitebox
+/* Stage-2 job API: these are external symbols too, so the second source copy
+ * must rename them or the linker sees duplicate definitions. */
+#define file_mgr_capture_open file_mgr_capture_open__whitebox
+#define file_mgr_capture_write file_mgr_capture_write__whitebox
+#define file_mgr_capture_close file_mgr_capture_close__whitebox
+#define file_mgr_capture_initial_meta file_mgr_capture_initial_meta__whitebox
+#define file_mgr_capture_cleanup file_mgr_capture_cleanup__whitebox
+#define file_mgr_capture_ensure_dir file_mgr_capture_ensure_dir__whitebox
+#define file_mgr_slot_tracked file_mgr_slot_tracked__whitebox
+#define file_mgr_run_job file_mgr_run_job__whitebox
 #include "../src/file_mgr.c"
 
 #define dump_pcm_data_write dump_pcm_data_write__whitebox
@@ -82,7 +92,7 @@ int run_whitebox_coverage_shim(void) {
 
     (void)ensure_dir_exists(NULL);
     (void)ensure_dir_exists(long_path);
-    close_idle_file_if_needed(NULL);
+    close_idle_file_if_needed(NULL, NULL, NULL);
 
     atomic_store(&g_init_state, DUMP_INIT_UNINITIALIZED);
     {
