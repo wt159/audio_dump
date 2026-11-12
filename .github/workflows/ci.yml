@@ -57,6 +57,45 @@ jobs:
           cmake --build build/cmake-o2
           ctest --test-dir build/cmake-o2 --output-on-failure
 
+  sanitizers:
+    name: Sanitizers (ASan + UBSan)
+    runs-on: ubuntu-latest
+    # The suite already asserts behaviour; this asserts that reaching that
+    # behaviour does not read freed memory, overflow a buffer or rely on
+    # undefined arithmetic. Linux only: MinGW has no working ASan.
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Show toolchain
+        run: gcc --version | head -1
+
+      - name: Build and run the suite under ASan and UBSan
+        working-directory: dump_pcm_data
+        env:
+          ASAN_OPTIONS: detect_leaks=1:abort_on_error=1:strict_string_checks=1
+          UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+        run: |
+          cmake -S . -B build/san -DDUMP_PCM_BUILD_TESTS=ON \
+            -DCMAKE_C_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer -g" \
+            -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined"
+          cmake --build build/san
+
+          # Positive control: a green run is worthless if the flags never
+          # reached the compiler. The suite is mostly I/O and sleeps, so an
+          # instrumented run is barely slower than a plain one - the timing
+          # cannot tell you whether this job is doing anything.
+          if ! nm build/san/dump_pcm_test | grep -q '__asan_init'; then
+            echo "::error::the test binary is not instrumented with ASan"
+            exit 1
+          fi
+          if ! nm build/san/dump_pcm_test | grep -q '__ubsan_handle'; then
+            echo "::error::the test binary is not instrumented with UBSan"
+            exit 1
+          fi
+
+          ctest --test-dir build/san --output-on-failure
+
   mingw-compile:
     name: MinGW cross compile check
     # Same assertion as before - the module compiles for Windows with MinGW on
