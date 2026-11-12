@@ -6,7 +6,7 @@
 
 ## Context
 
-Fifteen of the 66 PC cases cannot assert anything in the process that runs the
+Fifteen of the PC cases cannot assert anything in the process that runs the
 rest of the suite. They probe module-wide state: the lazy singleton init, the
 low-storage latch, the one-shot retention scan, init failure and retry. Running
 them in the main process would either observe a module that is already

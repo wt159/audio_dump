@@ -203,14 +203,14 @@ cmake --build build/cmake
 
 ## Windows 运行期验证
 
-Windows 上现在能跑**完整**的 66 个用例，不再只是编译通过：
+Windows 上现在能跑**完整**的测试套件，不再只是编译通过：
 
 ```bash
 cd dump_pcm_data
 MINGW_BIN=/d/Qt/Tools/mingw730_64/bin sh test/run_full_windows.sh
 ```
 
-脚本用 MinGW-w64 编译模块与全部测试源码，然后在开启 dump 的状态下执行，末尾应看到 `Tests Passed: 66 / Tests Failed: 0`。加 `USE_CMAKE=1` 改走 `CMakeLists.txt`：
+脚本用 MinGW-w64 编译模块与全部测试源码，然后在开启 dump 的状态下执行，末尾应看到 `Tests Failed: 0` 且 `Registered` 与 `Total Tests` 相等。加 `USE_CMAKE=1` 改走 `CMakeLists.txt`：
 
 ```bash
 USE_CMAKE=1 \

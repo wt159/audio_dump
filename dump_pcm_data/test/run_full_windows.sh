@@ -1,7 +1,7 @@
 #!/bin/sh
 # Windows full-suite runner.
 #
-# Builds the PC harness with a native MinGW-w64 toolchain and runs all 66 cases
+# Builds the PC harness with a native MinGW-w64 toolchain and runs the full PC suite
 # in one process. The Windows smoke script stays as the fast sanity check; this
 # one is the real gate.
 #

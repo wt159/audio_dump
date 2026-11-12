@@ -1,12 +1,12 @@
 # Windows 全量测试套件
 
 - 关联：地图 #25；ADR `docs/adr/0001-test-process-isolation.md`
-- 状态：已实现，本机 MinGW 7.3 与 CTest 两条路径均 66/66 通过
+- 状态：已实现，本机 MinGW 7.3 与 CTest 两条路径均全绿通过
 - 日期：2026-11-11
 
 ## 目标与结果
 
-同一份 66 个用例的源码，在 Windows 上原生跑完并通过，用例名与数量不变、没有 skip、没有 `#ifdef` 分支断言。`fork` / `exec` / `waitpid` 收敛到一个显式的进程隔离层。
+同一份用例源码，在 Windows 上原生跑完并通过，用例名与数量不变、没有 skip、没有 `#ifdef` 分支断言。`fork` / `exec` / `waitpid` 收敛到一个显式的进程隔离层。
 
 ## 新增与改动的文件
 
@@ -14,7 +14,7 @@
 |---|---|
 | `test/proc_iso.h` / `test/proc_iso.c` | 进程隔离层。`iso_run()` 以显式环境块重新执行本二进制并取回退出码；POSIX 走 `fork` + `execve` + `waitpid`，Windows 走 `CreateProcessA` + `WaitForSingleObject` + `GetExitCodeProcess` |
 | `test/test_plat.h` | 平台拼写差异：`tp_mkdir()`、`tp_setenv()` / `tp_unsetenv()`、`tp_test_root()`。头文件内 `static inline`，不引入额外目标文件 |
-| `test/main.c` | 15 处 `fork` → `iso_run()`；18 处 `/tmp/audio_dump_test` → `tp_test_root()`；4 处双参 `mkdir` → `tp_mkdir()`；`/dev/null/subdir` 与 `/proc` 夹具改为可移植命题；用例改为注册表并由 `_Static_assert` 钉住 66 |
+| `test/main.c` | 15 处 `fork` → `iso_run()`；18 处 `/tmp/audio_dump_test` → `tp_test_root()`；4 处双参 `mkdir` → `tp_mkdir()`；`/dev/null/subdir` 与 `/proc` 夹具改为可移植命题；用例改为注册表并由 `_Static_assert` 钉住数量 |
 | `test/run_full_windows.sh` | 本机与 CI 的 Windows 入口，直接 `gcc` 或 `USE_CMAKE=1` |
 | `CMakeLists.txt` | `DUMP_PCM_BUILD_TESTS` 选项，注册 `add_test(pc-suite)` |
 | `Makefile` | `TEST_OBJ` 加入 `proc_iso.o`（Linux 侧唯一改动） |
@@ -63,8 +63,8 @@ Linux 侧仍是 `make` → `make run` → `make coverage`，行为不变，只�
 
 | 路径 | 结果 |
 |---|---|
-| `sh test/run_full_windows.sh`（MinGW 7.3，直连 `gcc`） | 66 通过 / 0 失败，连续三次一致 |
-| `USE_CMAKE=1 sh test/run_full_windows.sh` | 66 通过 / 0 失败 |
+| `sh test/run_full_windows.sh`（MinGW 7.3，直连 `gcc`） | 全绿，连续三次一致 |
+| `USE_CMAKE=1 sh test/run_full_windows.sh` | 全绿 |
 | `-Werror=implicit-function-declaration` 等严格标志编译 | 无错误（预演 CI 上 gcc 15.2 的严格化） |
 | Linux `make run` | 由 CI 验证，本机无 Linux 工具链 |
 

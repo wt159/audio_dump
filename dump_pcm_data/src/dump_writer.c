@@ -1,8 +1,14 @@
 #include "dump_internal.h"
 
+#include <stdatomic.h>
 #include <stdlib.h>
 
 #define WRITER_POLL_INTERVAL_MS 100
+
+/* Incremented from whichever thread finishes a session; the sweep itself is
+ * done by the writer thread, which is the only thread allowed to do it. */
+static atomic_uint g_completed_sessions = 0;
+
 
 uint64_t get_file_size_limit_bytes(void) {
 #if defined(DUMP_PCM_PC) || !defined(ANDROID)
@@ -28,6 +34,9 @@ void destroy_session_locked(session_info_t *session) {
 
     close_session_file_locked(session);
     session_destroy(&g_ctx.sessions, session);
+    /* Counted here, not in the writer loop: a stop with nothing pending destroys
+     * the session on the caller thread, and those must count too. */
+    atomic_fetch_add(&g_completed_sessions, 1);
 }
 
 void stop_session_locked(session_info_t *session) {
@@ -41,6 +50,26 @@ void stop_session_locked(session_info_t *session) {
         destroy_session_locked(session);
     } else {
         LOGI("Session stopping: key1=%s key2=%s", session->key1, session->key2);
+    }
+}
+
+/* How many completed sessions may pass before the retention sweep runs again.
+ *
+ * Running it only when the writer thread starts bounds the directory for a
+ * process that restarts, and does nothing for one that does not: an audio HAL
+ * lives for days, and files that cross the seven-day line during its lifetime
+ * would never be pruned. The sweep is an opendir plus a stat per .pcm file, so
+ * this interval keeps the cost off the caller thread and out of the hot path
+ * while still re-applying the bound well before the directory matters. */
+#define RETENTION_CLEANUP_SESSION_INTERVAL 8
+
+static void maybe_run_retention_cleanup(void) {
+    if (atomic_load(&g_completed_sessions) < RETENTION_CLEANUP_SESSION_INTERVAL) {
+        return;
+    }
+    atomic_store(&g_completed_sessions, 0);
+    if (file_mgr_cleanup(100, 7) != 0) {
+        LOGW("Periodic retention cleanup failed");
     }
 }
 
@@ -80,6 +109,9 @@ void *writer_thread_func(void *arg) {
 
         if (queue_pop(&g_ctx.queue, &block) != 0) {
             pthread_mutex_unlock(&g_ctx.mutex);
+            /* The queue going idle is the cheapest moment to re-apply the
+             * retention bound; the sweep must not hold the mutex. */
+            maybe_run_retention_cleanup();
             continue;
         }
 
@@ -152,6 +184,7 @@ void *writer_thread_func(void *arg) {
         }
         pthread_mutex_unlock(&g_ctx.mutex);
 
+        maybe_run_retention_cleanup();
         free(block.buffer);
     }
 
