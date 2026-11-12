@@ -56,9 +56,11 @@ static void shutdown_module(void) {
 
     pthread_mutex_lock(&g_ctx.mutex);
     queue_destroy(&g_ctx.queue);
-    file_mgr_destroy(&g_ctx.file_mgr);
     session_mgr_destroy(&g_ctx.sessions);
     pthread_mutex_unlock(&g_ctx.mutex);
+    /* Teardown closes every tracked slot and writes final sidecars, so it must
+     * run outside C (L4). The writer has been joined, no session is live. */
+    file_mgr_destroy(&g_ctx.file_mgr);
 
     pthread_cond_destroy(&g_ctx.cond);
     pthread_mutex_destroy(&g_ctx.mutex);
@@ -176,6 +178,7 @@ void dump_pcm_data_write_ex(const char *buffer, uint32_t buffer_size, const char
     session_info_t *session = NULL;
     session_info_t *rollover_session = NULL;
     session_info_t *stopped_session = NULL;
+    FILE *deferred_close = NULL;
     uint64_t now = 0;
 
     if (buffer_size == 0 || (buffer == NULL && buffer_size > 0) ||
@@ -263,10 +266,14 @@ void dump_pcm_data_write_ex(const char *buffer, uint32_t buffer_size, const char
     session->last_write_time = now;
     session->pending_blocks++;
     if (stopped_session != NULL) {
-        stop_session_locked(stopped_session);
+        /* Only detach the handle under C; the fclose + final sidecar runs on
+         * this (audio) thread but AFTER the unlock, so the 20 ms injection
+         * surface on the caller path is gone. */
+        deferred_close = stop_session_locked(stopped_session);
     }
     pthread_cond_signal(&g_ctx.cond);
     pthread_mutex_unlock(&g_ctx.mutex);
+    run_deferred_close(deferred_close);
 }
 
 void dump_pcm_data_write(const char *buffer, uint32_t buffer_size, const char *key1, const char *key2) {
@@ -275,6 +282,7 @@ void dump_pcm_data_write(const char *buffer, uint32_t buffer_size, const char *k
 
 void dump_pcm_data_stop(const char *key1, const char *key2) {
     session_info_t *session = NULL;
+    FILE *deferred_close = NULL;
 
     if (atomic_load(&g_init_state) != DUMP_INIT_READY || !dump_key_is_valid(key1) || !dump_key_is_valid(key2)) {
         return;
@@ -284,9 +292,12 @@ void dump_pcm_data_stop(const char *key1, const char *key2) {
     session = session_find_accepting(&g_ctx.sessions, key1, key2);
     if (session != NULL) {
         LOGI("Stop dump session: key1=%s key2=%s", key1, key2);
-        stop_session_locked(session);
+        deferred_close = stop_session_locked(session);
     }
     pthread_mutex_unlock(&g_ctx.mutex);
+    /* Synchronous stop semantics are preserved: this thread still closes the
+     * file and finalises the sidecar before returning, just without holding C. */
+    run_deferred_close(deferred_close);
 }
 
 void dump_pcm_set_enabled(int enabled) {

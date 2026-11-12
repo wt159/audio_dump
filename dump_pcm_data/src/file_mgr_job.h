@@ -89,6 +89,10 @@ void file_mgr_capture_cleanup(file_manager_t *mgr, uint32_t max_files,
 void file_mgr_capture_ensure_dir(fm_job_t *out);
 bool file_mgr_slot_tracked(file_manager_t *mgr, FILE *fp);
 
+/* Caller must hold NO module lock for the whole sequence. A failed CLOSE job
+ * suppresses its paired FINAL_META so an unknown final size is never written. */
+void file_mgr_run_jobs(file_manager_t *mgr, fm_job_t *jobs, size_t count);
+
 /* Caller must hold NO module lock. */
 int file_mgr_run_job(file_manager_t *mgr, fm_job_t *job);
 

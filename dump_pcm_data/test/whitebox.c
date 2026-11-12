@@ -37,6 +37,8 @@
 #define file_mgr_capture_ensure_dir file_mgr_capture_ensure_dir__whitebox
 #define file_mgr_slot_tracked file_mgr_slot_tracked__whitebox
 #define file_mgr_run_job file_mgr_run_job__whitebox
+#define file_mgr_run_jobs file_mgr_run_jobs__whitebox
+#define file_mgr_mutex_addr_for_test file_mgr_mutex_addr_for_test__whitebox
 #include "../src/file_mgr.c"
 
 #define dump_pcm_data_write dump_pcm_data_write__whitebox
@@ -70,6 +72,7 @@
 #define close_session_file_locked close_session_file_locked__whitebox
 #define destroy_session_locked destroy_session_locked__whitebox
 #define stop_session_locked stop_session_locked__whitebox
+#define run_deferred_close run_deferred_close__whitebox
 #define check_storage check_storage__whitebox
 #define check_enabled check_enabled__whitebox
 #define count_active_sessions_locked count_active_sessions_locked__whitebox

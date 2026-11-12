@@ -1,15 +1,17 @@
 #!/bin/sh
 # Stage-2 static lock-order contract (docs/stage2-lock-order-spec.md section 12).
 #
-# PR 1/2 scope: the file_mgr side of the invariants.
+# Stage-2 invariants, both slices:
 #   L1  F is a leaf lock: capture_* takes/releases F on every path, and no
 #       blocking file I/O happens while F (or C) is held.
-#   L4  Blocking I/O is confined to file_mgr_run_job() and the two run-side
-#       helpers it calls (ensure_dir_exists, run_cleanup).
+#   L2  The writer's last F unlock precedes the first publish-phase C lock.
+#   L4  Blocking I/O is confined to file_mgr_run_job() / run_jobs(), never
+#       while C or F is held.
 #   POD jobs must not reach back into session_info_t.
 #
-# The writer-side "no I/O inside a C-held region" assertion arrives with PR 2/2,
-# when the three-phase loop replaces the compatibility layer on hot paths.
+# Checks 1-6 cover the file_mgr side (PR 1/2). Checks 7-8 cover the writer /
+# public-API side (PR 2/2): no C-held region may call file_mgr_* or do I/O,
+# and the execution phase may not acquire C at all.
 set -eu
 
 MODULE_DIR=$(cd "$(dirname "$0")/.." && pwd)
@@ -89,4 +91,47 @@ for fn in $COMPAT; do
     fi
 done
 
-printf 'lock-order contract: OK (6 capture sites, balanced F, I/O confined to run)\n'
+# 7. No C-held region in the production hot paths may call a file_mgr_* entry
+#    or perform blocking I/O. check_storage()/queue_*/session_* are pure memory
+#    or explicitly out of scope (spec section 15) and are not matched here.
+#    pthread_cond_timedwait releases C while waiting; treating that window as
+#    C-held is the conservative direction, so it cannot mask a violation.
+# Literal substrings, not a regex: awk's dynamic regex would eat the escaped
+# parentheses and turn the whole expression into an unbalanced pattern.
+HOT_TOKENS='file_mgr_ fopen( fclose( fwrite( fflush( opendir( readdir( remove( rename( sidecar_write_'
+for hot in dump_writer.c dump_pcm_data.c; do
+    if awk -v toks="$HOT_TOKENS" '
+        BEGIN { n = split(toks, tok, " ") }
+        /pthread_mutex_lock\(&g_ctx\.mutex\)/ { inC = 1 }
+        inC && /pthread_mutex_unlock\(&g_ctx\.mutex\)/ { inC = 0; next }
+        inC {
+            for (k = 1; k <= n; ++k) {
+                if (index($0, tok[k]) > 0) {
+                    printf "%s:%d: %s\n", FILENAME, NR, $0 > "/dev/stderr"
+                    bad = 1
+                }
+            }
+        }
+        END { exit bad ? 1 : 0 }
+    ' "$MODULE_DIR/src/$hot"; then
+        :
+    else
+        fail "$hot performs file I/O or calls the compatibility layer while holding C"
+    fi
+done
+
+# 8. The execution phase and the deferred-close helper must never acquire C:
+#    that would turn an F-held region into F->C (the ABBA edge the evidence
+#    ticket pinned down). This is the static half of invariant L2.
+EXEC_BODY=$(awk '/^static void execute_block\(/,/^}/' "$MODULE_DIR/src/dump_writer.c")
+[ -n "$EXEC_BODY" ] || fail "execute_block() not found"
+if printf '%s\n' "$EXEC_BODY" | grep -q 'pthread_mutex_lock(&g_ctx.mutex)'; then
+    fail "execute_block() acquires C (L2 violation)"
+fi
+DEFER_BODY=$(awk '/^void run_deferred_close\(/,/^}/' "$MODULE_DIR/src/dump_writer.c")
+[ -n "$DEFER_BODY" ] || fail "run_deferred_close() not found"
+if printf '%s\n' "$DEFER_BODY" | grep -q 'pthread_mutex_lock(&g_ctx.mutex)'; then
+    fail "run_deferred_close() acquires C (L2 violation)"
+fi
+
+printf 'lock-order contract: OK (6 capture sites, balanced F, I/O confined to run, no C-held I/O)\n'

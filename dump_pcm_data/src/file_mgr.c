@@ -433,11 +433,13 @@ void file_mgr_capture_write(file_manager_t *mgr, FILE *fp, const char *data,
     out->payload_size = size;
 
     /* Pure-memory slot lookup under F: decide whether run must commit the
-     * written size. A foreign fp still gets its fwrite (legacy behaviour), it
-     * simply has no slot to account for. */
+     * written size, and resolve the write target from the F-owned slot table
+     * rather than reusing a pointer captured under C. A foreign fp still gets
+     * its fwrite (legacy behaviour), it simply has no slot to account for. */
     pthread_mutex_lock(&g_file_mgr_mutex);
     slot = find_slot_by_fp(mgr, fp);
     out->needs_slot_commit = (slot != NULL);
+    out->fp = (slot != NULL) ? slot->fp : fp;
     pthread_mutex_unlock(&g_file_mgr_mutex);
 }
 
@@ -798,8 +800,10 @@ int file_mgr_run_job(file_manager_t *mgr, fm_job_t *job) {
 }
 
 /* A CLOSE job's rc gates its paired FINAL_META job: a failed fclose means the
- * final size is unknown, so the sidecar must not be marked complete. */
-static void run_job_sequence(file_manager_t *mgr, fm_job_t *jobs, size_t count) {
+ * final size is unknown, so the sidecar must not be marked complete. Exported
+ * so the stage-2 three-phase writer can run a captured sequence outside C
+ * without going through the test-only compatibility layer. */
+void file_mgr_run_jobs(file_manager_t *mgr, fm_job_t *jobs, size_t count) {
     size_t i = 0;
 
     for (i = 0; i < count; ++i) {
@@ -857,7 +861,7 @@ void file_mgr_destroy(file_manager_t *mgr) {
     memset(mgr, 0, sizeof(*mgr));
     pthread_mutex_unlock(&g_file_mgr_mutex);
 
-    run_job_sequence(mgr, jobs, count);
+    file_mgr_run_jobs(mgr, jobs, count);
 }
 
 FILE *file_mgr_get_handle(file_manager_t *mgr, const char *key1, const char *key2,
@@ -884,7 +888,7 @@ FILE *file_mgr_get_handle(file_manager_t *mgr, const char *key1, const char *key
     snprintf(snap.file_path, sizeof(snap.file_path), "%s", path_buf);
 
     file_mgr_capture_open(mgr, &snap, jobs, &count);
-    run_job_sequence(mgr, jobs, count);
+    file_mgr_run_jobs(mgr, jobs, count);
 
     for (i = 0; i < count; ++i) {
         if (jobs[i].kind == FM_JOB_OPEN) {
@@ -924,7 +928,7 @@ int file_mgr_close(file_manager_t *mgr, FILE *fp) {
     if (count == 0) {
         return -1;
     }
-    run_job_sequence(mgr, jobs, count);
+    file_mgr_run_jobs(mgr, jobs, count);
     return 0;
 }
 
@@ -968,5 +972,9 @@ void file_mgr_set_timestamp_override_for_test(const char *timestamp) {
 
     strncpy(g_timestamp_override_for_test, timestamp, sizeof(g_timestamp_override_for_test) - 1);
     g_timestamp_override_for_test[sizeof(g_timestamp_override_for_test) - 1] = '\0';
+}
+
+void *file_mgr_mutex_addr_for_test(void) {
+    return (void *)&g_file_mgr_mutex;
 }
 #endif

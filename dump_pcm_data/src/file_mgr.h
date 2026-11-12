@@ -52,6 +52,10 @@ typedef int (*dump_fflush_fn_t)(FILE *stream);
 void file_mgr_set_fwrite_fn_for_test(dump_fwrite_fn_t fn);
 void file_mgr_set_fflush_fn_for_test(dump_fflush_fn_t fn);
 void file_mgr_set_timestamp_override_for_test(const char *timestamp);
+/* Address of the file-manager leaf lock F, for the deterministic lock-order
+ * audit cases in test/main.c. The opaque pointer keeps pthread.h out of this
+ * header (the public-header contract forbids POSIX-only includes). */
+void *file_mgr_mutex_addr_for_test(void);
 #endif
 
 #endif
