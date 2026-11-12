@@ -36,6 +36,11 @@ typedef struct {
     uint32_t queue_pending_blocks;
     uint64_t queue_pending_bytes;
     uint32_t active_session_count;
+    /* Blocks dropped by the caller path since process start: low storage
+     * latched, queue full, or no session available. Counted on the caller, not
+     * by the writer, so it says what the producer lost rather than what the
+     * disk rejected. */
+    uint64_t dropped_blocks;
 } dump_status_t;
 
 typedef enum {

@@ -64,6 +64,9 @@ int  dump_pcm_set_metadata_enabled(int enabled); /* sidecar 开关，默认关�
 
 /* 观测接口：默认构建不导出，需定义 DUMP_PCM_INTERNAL_DEBUG_API
  * 或 DUMP_PCM_DESKTOP_OBSERVE */
+/* dump_status_t 的 dropped_blocks 是进程启动以来调用路径丢弃的 block 数：
+ * 低存储闩锁、队列满、无可用会话。模块关闭期间的写入不算丢弃。
+ * 它是评估「丢得更多但更及时」这类取舍的唯一依据。 */
 int dump_pcm_data_get_status(dump_status_t *status);
 int dump_pcm_data_get_active_sessions(dump_session_info_t *sessions,
                                       int max_count, int *actual_count);

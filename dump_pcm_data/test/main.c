@@ -1061,12 +1061,23 @@ static void test_low_storage_latch_requires_reenable(void) {
     }
 
     tp_setenv("AUDIO_DUMP_TEST_AVAILABLE_MB", "1000");
-    dump_pcm_data_write("low", 3, "low_key", "two");
-    usleep(60000);
-    dump_pcm_data_get_status(&status);
-    if (!status.low_storage_triggered || status.active_session_count != 0) {
-        fail(name, "latch cleared without re-enable");
-        return;
+    {
+        uint64_t dropped_before = status.dropped_blocks;
+
+        dump_pcm_data_write("low", 3, "low_key", "two");
+        usleep(60000);
+        dump_pcm_data_get_status(&status);
+        if (!status.low_storage_triggered || status.active_session_count != 0) {
+            fail(name, "latch cleared without re-enable");
+            return;
+        }
+        /* A block refused while the feature is on is a loss, and the caller has
+         * to be able to see it: this counter is what any later decision about
+         * dropping more aggressively would be measured against. */
+        if (status.dropped_blocks != dropped_before + 1) {
+            fail(name, "dropped block was not counted");
+            return;
+        }
     }
 
     tp_unsetenv("AUDIO_DUMP_ENABLED");

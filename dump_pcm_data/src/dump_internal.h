@@ -57,6 +57,7 @@ extern pthread_mutex_t g_init_mutex;
 extern pthread_cond_t g_init_cond;
 extern _Atomic int g_init_state;
 extern atomic_int g_enabled_override;
+extern atomic_ullong g_dropped_blocks;
 extern uint64_t g_last_init_fail_ms;
 extern pthread_mutex_t g_storage_mutex;
 extern dump_storage_query_fn_t g_dump_storage_query_fn;

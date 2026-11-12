@@ -40,6 +40,9 @@ uint32_t count_active_sessions_locked(void) {
     return count;
 }
 
+/* Caller-side drops, monotonic. Atomic because writers race with get_status. */
+atomic_ullong g_dropped_blocks = 0;
+
 static void shutdown_module(void) {
     if (atomic_load(&g_init_state) != DUMP_INIT_READY) {
         return;
@@ -191,11 +194,19 @@ void dump_pcm_data_write_ex(const char *buffer, uint32_t buffer_size, const char
     }
     now = get_timestamp_ms();
     if (check_storage() != 0) {
+        /* Latched low storage or a failed probe: the block is refused before the
+         * mutex is ever taken, so this is the site that has to count it. */
+        atomic_fetch_add(&g_dropped_blocks, 1);
         return;
     }
 
     pthread_mutex_lock(&g_ctx.mutex);
     if (!atomic_load(&g_ctx.enabled) || atomic_load(&g_ctx.low_storage_triggered) || queue_is_full(&g_ctx.queue)) {
+        /* Switching the feature off is not a drop; refusing a block while it is
+         * on is. Low storage and a full queue both mean data was lost. */
+        if (atomic_load(&g_ctx.enabled)) {
+            atomic_fetch_add(&g_dropped_blocks, 1);
+        }
         pthread_mutex_unlock(&g_ctx.mutex);
         return;
     }
@@ -211,6 +222,7 @@ void dump_pcm_data_write_ex(const char *buffer, uint32_t buffer_size, const char
     }
     if (session == NULL) {
         if (check_storage() != 0 || session_live_count(&g_ctx.sessions) >= MAX_SESSIONS) {
+            atomic_fetch_add(&g_dropped_blocks, 1);
             LOGW("Drop PCM block: no session available for key1=%s key2=%s", key1, key2);
             pthread_mutex_unlock(&g_ctx.mutex);
             return;
@@ -238,6 +250,7 @@ void dump_pcm_data_write_ex(const char *buffer, uint32_t buffer_size, const char
     // Call-entry time; do not use writer-thread timing here.
     block.enqueue_time = now;
     if (queue_push(&g_ctx.queue, &block) != 0) {
+        atomic_fetch_add(&g_dropped_blocks, 1);
         LOGW("Drop PCM block: queue full key1=%s key2=%s size=%u", key1, key2, buffer_size);
         if (stopped_session != NULL) {
             session_destroy(&g_ctx.sessions, session);
