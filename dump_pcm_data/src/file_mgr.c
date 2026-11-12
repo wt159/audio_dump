@@ -122,18 +122,67 @@ static int ensure_dir_exists(const char *path) {
     return 0;
 }
 
-static void generate_filename(const char *key1, const char *key2, uint32_t generation,
-                              uint32_t split_index, char *buf, size_t len) {
+/* Longest fixed part of a dump file name, excluding the root and the keys:
+ * "_<hash8>_<gen>_<split>_<timestamp>.pcm". Ten digits each for generation and
+ * split index, nineteen for the timestamp, so 64 leaves room to spare. */
+#define DUMP_NAME_TAIL_MAX 64
+
+static int generate_filename(const char *key1, const char *key2, uint32_t generation,
+                             uint32_t split_index, char *buf, size_t len) {
     char escaped_key1[DUMP_PCM_KEY_MAX_LEN + 1];
     char escaped_key2[DUMP_PCM_KEY_MAX_LEN + 1];
+    char tail[DUMP_NAME_TAIL_MAX];
     char ts[32];
     uint32_t stable_hash = dump_key_hash_pair(key1, key2);
+    size_t root_len = 0;
+    size_t room = 0;
+    size_t key1_len = 0;
+    size_t key2_len = 0;
+    int tail_len = 0;
+
+    if (buf == NULL || len == 0) {
+        return -1;
+    }
 
     dump_key_escape(key1, escaped_key1, sizeof(escaped_key1));
     dump_key_escape(key2, escaped_key2, sizeof(escaped_key2));
     get_timestamp_str(ts, sizeof(ts));
-    snprintf(buf, len, "%s%s_%s_%08x_%u_%u_%s.pcm", g_root_dir, escaped_key1, escaped_key2,
-             stable_hash, generation, split_index, ts);
+
+    /* Everything that makes the name unique and makes retention recognise it
+     * lives in the tail, so the tail is composed separately and never clipped. */
+    tail_len = snprintf(tail, sizeof(tail), "_%08x_%u_%u_%s.pcm", stable_hash, generation,
+                        split_index, ts);
+    if (tail_len < 0 || (size_t)tail_len >= sizeof(tail)) {
+        return -1;
+    }
+
+    root_len = strlen(g_root_dir);
+    /* NUL, the separator between the keys, and at least one character per key. */
+    if (root_len + (size_t)tail_len + 4 > len) {
+        LOGE("No room for a dump file name: root=%u tail=%d buffer=%u", (unsigned)root_len,
+             tail_len, (unsigned)len);
+        return -1;
+    }
+
+    room = len - root_len - (size_t)tail_len - 2;
+    key1_len = strlen(escaped_key1);
+    key2_len = strlen(escaped_key2);
+    if (key1_len + key2_len > room) {
+        size_t half = room / 2;
+
+        /* Clip the readable part, not the identifying one. A name without the
+         * .pcm suffix is invisible to the retention sweep, and without the
+         * hash/generation it can collide with a different session and append
+         * into the same file. */
+        key1_len = (key1_len < half) ? key1_len : half;
+        key2_len = (key2_len < room - key1_len) ? key2_len : (room - key1_len);
+        LOGW("Dump file name clipped to fit: root=%u keys=%u", (unsigned)root_len,
+             (unsigned)(key1_len + key2_len));
+    }
+
+    snprintf(buf, len, "%s%.*s_%.*s%s", g_root_dir, (int)key1_len, escaped_key1, (int)key2_len,
+             escaped_key2, tail);
+    return 0;
 }
 
 static file_info_t *find_slot_by_fp(file_manager_t *mgr, FILE *fp) {
@@ -284,7 +333,9 @@ FILE *file_mgr_get_handle(file_manager_t *mgr, const char *key1, const char *key
 
     *is_new = false;
     if (path_buf[0] == '\0') {
-        generate_filename(key1, key2, generation, split_index, path_buf, path_buf_size);
+        if (generate_filename(key1, key2, generation, split_index, path_buf, path_buf_size) != 0) {
+            return NULL;
+        }
         *is_new = true;
     }
 
