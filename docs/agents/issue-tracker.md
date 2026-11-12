@@ -47,6 +47,6 @@ Used by `/wayfinder`. The **map** is a single issue with **child** issues as tic
 ## Repo specifics
 
 - `wt159/audio_dump` is a C11 PCM dump module consumed by an Android HAL; the historical design notes live in `docs/`.
-- Every change lands through a pull request. `main` is not pushed to directly.
-- Both CI jobs are required gates: `PC build, test and coverage` (`make` → `make run` → `make coverage`, plus a CMake build) and `MinGW cross compile check`. A red MinGW job is a real portability regression, not noise.
-- There is no local C toolchain on the maintainer workstation; CI is the compiler of record.
+- Every change lands through a pull request. `main` is protected: three required status checks (`PC build, test and coverage`, `MinGW cross compile check`, `Windows native full suite`), no force pushes, no deletions, and admins are not exempt. Expect a direct push to be rejected.
+- All three checks are real gates. A red `MinGW cross compile check` is a portability regression, not noise; a red `Windows native full suite` means one of the 66 cases broke on the Windows runtime, and its log names the case.
+- There is no local C toolchain for the POSIX build on the maintainer workstation; CI is the compiler of record for `make`. The Windows suite can be run locally (see `docs/windows-full-suite.md`).
