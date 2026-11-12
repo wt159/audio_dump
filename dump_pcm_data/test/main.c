@@ -2458,6 +2458,21 @@ static void test_file_manager_direct(void) {
         return;
     }
 
+    /* A buffer that cannot hold the whole name must be refused. Truncating
+     * instead would drop the .pcm suffix and the hash, producing a file the
+     * retention sweep never sees and another session can collide with. */
+    {
+        char tiny[40] = {0};
+
+        if (file_mgr_get_handle(&mgr, "port", "tiny", 1, 0, tiny, sizeof(tiny), &is_new) != NULL) {
+            file_mgr_close(&mgr, fp_a);
+            file_mgr_close(&mgr, fp_b);
+            file_mgr_destroy(&mgr);
+            fail(name, "a buffer too small for the name was accepted");
+            return;
+        }
+    }
+
     if (file_mgr_write(&mgr, fp_a, "abc", 3) != 0 || file_mgr_close(&mgr, fp_a) != 0 ||
         file_size(path_a, &size) != 0 || size != 3) {
         file_mgr_destroy(&mgr);
@@ -2485,6 +2500,59 @@ static void test_file_manager_direct(void) {
 
     file_mgr_close(&mgr, fp_b);
     file_mgr_destroy(&mgr);
+
+    /* A long root plus maximum-length keys must still yield a name that ends in
+     * .pcm and stays unique. The identifying part (hash, generation, split,
+     * timestamp) is what retention and collision-freedom depend on, so it is
+     * the readable key part that has to give way when space runs out. */
+    {
+        char long_root[256] = {0};
+        char long_key1[DUMP_PCM_KEY_MAX_LEN + 1];
+        char long_key2[DUMP_PCM_KEY_MAX_LEN + 1];
+        char long_a[256] = {0};
+        char long_b[256] = {0};
+
+        snprintf(long_root, sizeof(long_root), "%s/long_%0*d/", tp_test_root(), 120, 0);
+        memset(long_key1, 'k', sizeof(long_key1) - 1);
+        long_key1[sizeof(long_key1) - 1] = '\0';
+        memset(long_key2, 'j', sizeof(long_key2) - 1);
+        long_key2[sizeof(long_key2) - 1] = '\0';
+
+        file_mgr_set_root_dir(long_root);
+        if (file_mgr_init(&mgr) != 0) {
+            file_mgr_set_root_dir(tp_test_root());
+            fail(name, "file manager init failed under a long root");
+            return;
+        }
+
+        fp_a = file_mgr_get_handle(&mgr, long_key1, long_key2, 1, 0, long_a, sizeof(long_a),
+                                   &is_new);
+        fp_b = file_mgr_get_handle(&mgr, long_key1, long_key2, 2, 0, long_b, sizeof(long_b),
+                                   &is_new);
+        if (fp_a == NULL || fp_b == NULL) {
+            file_mgr_set_root_dir(tp_test_root());
+            fail(name, "long root produced no file name at all");
+            return;
+        }
+        if (strlen(long_a) + 1 > sizeof(long_a) || strlen(long_a) < 4 ||
+            strcmp(long_a + strlen(long_a) - 4, ".pcm") != 0 ||
+            strlen(long_b) < 4 || strcmp(long_b + strlen(long_b) - 4, ".pcm") != 0) {
+            file_mgr_set_root_dir(tp_test_root());
+            fail(name, "long root produced a name retention cannot recognise");
+            return;
+        }
+        if (strcmp(long_a, long_b) == 0) {
+            file_mgr_set_root_dir(tp_test_root());
+            fail(name, "two generations collapsed onto one long name");
+            return;
+        }
+
+        file_mgr_close(&mgr, fp_a);
+        file_mgr_close(&mgr, fp_b);
+        file_mgr_destroy(&mgr);
+        file_mgr_set_root_dir(tp_test_root());
+    }
+
     pass(name);
 }
 
