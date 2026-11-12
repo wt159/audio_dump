@@ -2,6 +2,7 @@
 
 #include <dirent.h>
 #include <errno.h>
+#include <pthread.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
@@ -13,6 +14,16 @@
 #include "logger.h"
 #include "session.h"
 
+/* File manager state is touched from two threads: the writer (open, write,
+ * close, sweep) and the caller (closing a session's file on stop). Until now it
+ * was protected by whatever lock the caller happened to hold, which only worked
+ * because both threads happened to use the same one. The manager owns its own
+ * lock instead, so file I/O can move out from under the module mutex in a later
+ * change without re-deriving which call sites need it.
+ *
+ * Never held while acquiring another lock, and never acquired while holding one:
+ * every other lock in the module is taken before entering this component. */
+static pthread_mutex_t g_file_mgr_mutex = PTHREAD_MUTEX_INITIALIZER;
 static char g_root_dir[256] = DUMP_ROOT_DIR;
 static dump_fwrite_fn_t g_dump_fwrite_fn = fwrite;
 static dump_fflush_fn_t g_dump_fflush_fn = fflush;
@@ -297,12 +308,17 @@ void file_mgr_set_root_dir(const char *dir) {
 }
 
 int file_mgr_init(file_manager_t *mgr) {
+    int rc = -1;
+
     if (mgr == NULL) {
         return -1;
     }
 
+    pthread_mutex_lock(&g_file_mgr_mutex);
     memset(mgr, 0, sizeof(*mgr));
-    return ensure_dir_exists(g_root_dir);
+    rc = ensure_dir_exists(g_root_dir);
+    pthread_mutex_unlock(&g_file_mgr_mutex);
+    return rc;
 }
 
 void file_mgr_destroy(file_manager_t *mgr) {
@@ -310,6 +326,7 @@ void file_mgr_destroy(file_manager_t *mgr) {
         return;
     }
 
+    pthread_mutex_lock(&g_file_mgr_mutex);
     for (uint32_t i = 0; i < MAX_OPEN_FILES; ++i) {
         if (mgr->files[i].in_use && mgr->files[i].fp != NULL) {
             if (close_slot_file(&mgr->files[i])) {
@@ -319,6 +336,7 @@ void file_mgr_destroy(file_manager_t *mgr) {
     }
 
     memset(mgr, 0, sizeof(*mgr));
+    pthread_mutex_unlock(&g_file_mgr_mutex);
 }
 
 FILE *file_mgr_get_handle(file_manager_t *mgr, const char *key1, const char *key2,
@@ -331,9 +349,12 @@ FILE *file_mgr_get_handle(file_manager_t *mgr, const char *key1, const char *key
         return NULL;
     }
 
+    pthread_mutex_lock(&g_file_mgr_mutex);
+
     *is_new = false;
     if (path_buf[0] == '\0') {
         if (generate_filename(key1, key2, generation, split_index, path_buf, path_buf_size) != 0) {
+            pthread_mutex_unlock(&g_file_mgr_mutex);
             return NULL;
         }
         *is_new = true;
@@ -342,6 +363,7 @@ FILE *file_mgr_get_handle(file_manager_t *mgr, const char *key1, const char *key
     for (uint32_t i = 0; i < MAX_OPEN_FILES; ++i) {
         if (mgr->files[i].in_use && strcmp(mgr->files[i].path, path_buf) == 0) {
             *is_new = false;
+            pthread_mutex_unlock(&g_file_mgr_mutex);
             return mgr->files[i].fp;
         }
     }
@@ -350,6 +372,7 @@ FILE *file_mgr_get_handle(file_manager_t *mgr, const char *key1, const char *key
         close_idle_file_if_needed(mgr);
         if (mgr->count >= MAX_OPEN_FILES) {
             LOGW("Max open files reached, no idle slot available");
+            pthread_mutex_unlock(&g_file_mgr_mutex);
             return NULL;
         }
     }
@@ -357,6 +380,7 @@ FILE *file_mgr_get_handle(file_manager_t *mgr, const char *key1, const char *key
     fp = fopen(path_buf, "ab");
     if (fp == NULL) {
         LOGE("Failed to open file: %s, errno=%d", path_buf, errno);
+        pthread_mutex_unlock(&g_file_mgr_mutex);
         return NULL;
     }
 
@@ -376,26 +400,31 @@ FILE *file_mgr_get_handle(file_manager_t *mgr, const char *key1, const char *key
             }
             mgr->count++;
             LOGI("File opened: %s", path_buf);
+            pthread_mutex_unlock(&g_file_mgr_mutex);
             return fp;
         }
     }
 
     fclose(fp);
+    pthread_mutex_unlock(&g_file_mgr_mutex);
     return NULL;
 }
 
 int file_mgr_write(file_manager_t *mgr, FILE *fp, const char *data, size_t size) {
+    int rc = -1;
+
     if (mgr == NULL || fp == NULL || data == NULL || size == 0) {
         return -1;
     }
 
+    pthread_mutex_lock(&g_file_mgr_mutex);
     if (g_dump_fwrite_fn(data, 1, size, fp) != size) {
         LOGE("Failed to write to file: expected=%zu", size);
-        return -1;
+        goto out;
     }
     if (g_dump_fflush_fn(fp) != 0) {
         LOGE("Failed to flush file after write");
-        return -1;
+        goto out;
     }
 
     for (uint32_t i = 0; i < MAX_OPEN_FILES; ++i) {
@@ -406,14 +435,21 @@ int file_mgr_write(file_manager_t *mgr, FILE *fp, const char *data, size_t size)
         }
     }
 
-    return 0;
+    rc = 0;
+
+out:
+    pthread_mutex_unlock(&g_file_mgr_mutex);
+    return rc;
 }
 
 int file_mgr_close(file_manager_t *mgr, FILE *fp) {
+    int rc = -1;
+
     if (mgr == NULL || fp == NULL) {
         return -1;
     }
 
+    pthread_mutex_lock(&g_file_mgr_mutex);
     for (uint32_t i = 0; i < MAX_OPEN_FILES; ++i) {
         if (mgr->files[i].in_use && mgr->files[i].fp == fp) {
             if (close_slot_file(&mgr->files[i])) {
@@ -422,18 +458,28 @@ int file_mgr_close(file_manager_t *mgr, FILE *fp) {
             mgr->files[i].in_use = false;
             mgr->count--;
             LOGI("File closed: %s", mgr->files[i].path);
-            return 0;
+            rc = 0;
+            break;
         }
     }
 
-    return -1;
+    pthread_mutex_unlock(&g_file_mgr_mutex);
+    return rc;
 }
 
 void file_mgr_attach_meta(file_manager_t *mgr, FILE *fp, const dump_pcm_file_meta_t *meta,
                           bool write_initial) {
-    file_info_t *slot = find_slot_by_fp(mgr, fp);
+    file_info_t *slot = NULL;
+
+    if (mgr == NULL || fp == NULL) {
+        return;
+    }
+
+    pthread_mutex_lock(&g_file_mgr_mutex);
+    slot = find_slot_by_fp(mgr, fp);
 
     if (slot == NULL || meta == NULL || !sidecar_is_enabled()) {
+        pthread_mutex_unlock(&g_file_mgr_mutex);
         return;
     }
 
@@ -442,26 +488,33 @@ void file_mgr_attach_meta(file_manager_t *mgr, FILE *fp, const dump_pcm_file_met
         slot->has_meta = true;
     }
     if (!write_initial || !session_format_is_valid(&slot->meta.format)) {
+        pthread_mutex_unlock(&g_file_mgr_mutex);
         return;
     }
 
     if (sidecar_write_meta(slot->path, &slot->meta, false, 0, 0) != 0) {
         LOGW("Failed to write initial sidecar: %s", slot->path);
     }
+    pthread_mutex_unlock(&g_file_mgr_mutex);
 }
 
 bool file_mgr_is_tracking(file_manager_t *mgr, FILE *fp) {
+    bool tracked = false;
+
     if (mgr == NULL || fp == NULL) {
         return false;
     }
 
+    pthread_mutex_lock(&g_file_mgr_mutex);
     for (uint32_t i = 0; i < MAX_OPEN_FILES; ++i) {
         if (mgr->files[i].in_use && mgr->files[i].fp == fp) {
-            return true;
+            tracked = true;
+            break;
         }
     }
 
-    return false;
+    pthread_mutex_unlock(&g_file_mgr_mutex);
+    return tracked;
 }
 
 /* Only our own artifacts take part in the retention policy. A substring match
@@ -488,9 +541,11 @@ int file_mgr_cleanup(uint32_t max_files, uint32_t max_days) {
     time_t cutoff = 0;
     uint32_t keep = 0;
 
+    pthread_mutex_lock(&g_file_mgr_mutex);
     dir = opendir(g_root_dir);
     if (dir == NULL) {
         LOGE("Failed to open directory: %s", g_root_dir);
+        pthread_mutex_unlock(&g_file_mgr_mutex);
         return -1;
     }
 
@@ -509,6 +564,7 @@ int file_mgr_cleanup(uint32_t max_files, uint32_t max_days) {
             if (grown == NULL) {
                 free(files);
                 closedir(dir);
+                pthread_mutex_unlock(&g_file_mgr_mutex);
                 return -1;
             }
             files = grown;
@@ -528,6 +584,7 @@ int file_mgr_cleanup(uint32_t max_files, uint32_t max_days) {
     closedir(dir);
     if (file_count <= max_files) {
         free(files);
+        pthread_mutex_unlock(&g_file_mgr_mutex);
         return 0;
     }
 
@@ -556,6 +613,7 @@ int file_mgr_cleanup(uint32_t max_files, uint32_t max_days) {
     }
 
     free(files);
+    pthread_mutex_unlock(&g_file_mgr_mutex);
     return 0;
 }
 
