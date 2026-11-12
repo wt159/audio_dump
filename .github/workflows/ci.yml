@@ -46,6 +46,17 @@ jobs:
           cmake --build build/cmake
           ctest --test-dir build/cmake --output-on-failure
 
+      # The suite is supposed to be optimization-independent. It was not: at -O2
+      # gcc treats malloc/calloc/realloc as builtins, which reorders the calls
+      # the allocator fault-injection cases count. -fno-builtin-* fixes that and
+      # this step keeps the flags from being dropped.
+      - name: Test target at -O2
+        working-directory: dump_pcm_data
+        run: |
+          cmake -S . -B build/cmake-o2 -DDUMP_PCM_BUILD_TESTS=ON -DCMAKE_C_FLAGS=-O2
+          cmake --build build/cmake-o2
+          ctest --test-dir build/cmake-o2 --output-on-failure
+
   mingw-compile:
     name: MinGW cross compile check
     # Same assertion as before - the module compiles for Windows with MinGW on

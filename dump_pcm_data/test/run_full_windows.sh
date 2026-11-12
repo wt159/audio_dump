@@ -62,12 +62,14 @@ if [ "$USE_CMAKE" = "1" ]; then
 else
     printf 'building with a direct gcc invocation\n'
     for f in "$MODULE_DIR"/src/*.c; do
-        "$CC" -std=c11 -Wall -Wextra -I"$MODULE_DIR/include" -I"$MODULE_DIR/src" \
+        "$CC" -std=c11 -Wall -Wextra -fno-builtin-malloc -fno-builtin-calloc -fno-builtin-realloc \
+            -I"$MODULE_DIR/include" -I"$MODULE_DIR/src" \
             -DDUMP_PCM_PC -D_POSIX_C_SOURCE=200809L \
             -c "$f" -o "$OUT_DIR/obj/$(basename "$f" .c).o"
     done
     for f in "$MODULE_DIR"/test/main.c "$MODULE_DIR"/test/whitebox.c "$MODULE_DIR"/test/proc_iso.c; do
-        "$CC" -std=c11 -Wall -Wextra -I"$MODULE_DIR/include" -I"$MODULE_DIR/src" \
+        "$CC" -std=c11 -Wall -Wextra -fno-builtin-malloc -fno-builtin-calloc -fno-builtin-realloc \
+            -I"$MODULE_DIR/include" -I"$MODULE_DIR/src" \
             -I"$MODULE_DIR/test" -DDUMP_PCM_PC -D_POSIX_C_SOURCE=200809L \
             -c "$f" -o "$OUT_DIR/obj/$(basename "$f" .c).o"
     done
