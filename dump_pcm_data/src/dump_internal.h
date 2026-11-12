@@ -6,6 +6,7 @@
 #include <pthread.h>
 #include <stdatomic.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <time.h>
 
 #define STORAGE_CHECK_INTERVAL_MS 1000
@@ -71,9 +72,14 @@ extern uint64_t g_file_size_limit_for_test;
 uint64_t get_timestamp_ms(void);
 int check_storage(void);
 int check_enabled(void);
-void close_session_file_locked(session_info_t *session);
-void destroy_session_locked(session_info_t *session);
-void stop_session_locked(session_info_t *session);
+/* Stage-2 three-phase: these run under C and only DETACH a handle from the
+ * session (pure memory). The returned FILE* must be closed by
+ * run_deferred_close() AFTER the caller releases C, so no blocking I/O ever
+ * happens while C is held (L4). NULL means nothing to close. */
+FILE *close_session_file_locked(session_info_t *session);
+FILE *destroy_session_locked(session_info_t *session);
+FILE *stop_session_locked(session_info_t *session);
+void run_deferred_close(FILE *fp);
 uint64_t get_file_size_limit_bytes(void);
 uint32_t count_active_sessions_locked(void);
 void *writer_thread_func(void *arg);

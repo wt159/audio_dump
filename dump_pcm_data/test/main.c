@@ -3,6 +3,7 @@
 #define DUMP_PCM_INTERNAL_DEBUG_API 1
 
 #include "../include/dump_pcm_data.h"
+#include "../src/dump_internal.h"
 #include "../src/dump_test_hooks.h"
 #include "../src/file_mgr.h"
 #include "../src/key_utils.h"
@@ -363,6 +364,73 @@ int __wrap_queue_pop(queue_t *q, data_block_t *block) {
         return -1;
     }
     return __real_queue_pop(q, block);
+}
+
+/* ---- Stage-2 deterministic lock-order audit (spec section 13.1) ---------
+ *
+ * The evidence probe used two barriers and an ABBA table. This in-suite form
+ * asserts the same thing directly: a per-thread "F is held" flag plus a count
+ * of every C acquisition that happens while F is held. Such an acquisition IS
+ * the F->C edge that would turn the C->F DAG into a cycle, so the judgement is
+ * on lock ownership and cannot depend on OS timing.
+ *
+ * Both wrappers are a plain pass-through while g_lock_audit_active is off, so
+ * the other cases see unchanged pthread behaviour. */
+static atomic_int g_lock_audit_active = 0;
+static atomic_int g_f_to_c_edges = 0;
+static atomic_int g_f_takes = 0;
+static atomic_int g_c_takes = 0;
+static _Thread_local int t_f_held = 0;
+
+int __real_pthread_mutex_lock(pthread_mutex_t *mutex);
+int __real_pthread_mutex_unlock(pthread_mutex_t *mutex);
+
+static int audit_lock_kind(pthread_mutex_t *mutex) {
+    if (mutex == (pthread_mutex_t *)file_mgr_mutex_addr_for_test()) {
+        return 2; /* F: g_file_mgr_mutex */
+    }
+    if (mutex == &g_ctx.mutex) {
+        return 1; /* C */
+    }
+    return 0;
+}
+
+int __wrap_pthread_mutex_lock(pthread_mutex_t *mutex) {
+    int kind = 0;
+    int rc;
+
+    if (atomic_load(&g_lock_audit_active) != 0) {
+        kind = audit_lock_kind(mutex);
+        if (kind == 2) {
+            atomic_fetch_add(&g_f_takes, 1);
+        } else if (kind == 1) {
+            atomic_fetch_add(&g_c_takes, 1);
+            if (t_f_held != 0) {
+                atomic_fetch_add(&g_f_to_c_edges, 1);
+            }
+        }
+    }
+    rc = __real_pthread_mutex_lock(mutex);
+    if (rc == 0 && kind == 2) {
+        t_f_held = 1;
+    }
+    return rc;
+}
+
+int __wrap_pthread_mutex_unlock(pthread_mutex_t *mutex) {
+    if (atomic_load(&g_lock_audit_active) != 0 &&
+        audit_lock_kind(mutex) == 2) {
+        t_f_held = 0;
+    }
+    return __real_pthread_mutex_unlock(mutex);
+}
+
+static void lock_audit_reset(void) {
+    atomic_store(&g_f_to_c_edges, 0);
+    atomic_store(&g_f_takes, 0);
+    atomic_store(&g_c_takes, 0);
+    t_f_held = 0;
+    atomic_store(&g_lock_audit_active, 1);
 }
 
 static void reset_test_dir(void) {
@@ -3501,6 +3569,98 @@ typedef struct {
     void (*run)(void);
 } test_case_t;
 
+/* Discrimination control for the audit. Manufactures one real F->C edge and
+ * requires the detector to report exactly one. C is free at that moment, so
+ * this can never deadlock and needs no barrier or timeout. If this case fails,
+ * the production-path case would be vacuous. */
+static int run_isolated_lock_order_negative(void) {
+    pthread_mutex_t *c_lock = &g_ctx.mutex;
+    pthread_mutex_t *f_lock = (pthread_mutex_t *)file_mgr_mutex_addr_for_test();
+
+    if (pthread_mutex_init(c_lock, NULL) != 0) {
+        return 2;
+    }
+    lock_audit_reset();
+    if (pthread_mutex_lock(f_lock) != 0) {
+        return 3;
+    }
+    if (pthread_mutex_lock(c_lock) != 0) {
+        pthread_mutex_unlock(f_lock);
+        return 4;
+    }
+    pthread_mutex_unlock(c_lock);
+    pthread_mutex_unlock(f_lock);
+    atomic_store(&g_lock_audit_active, 0);
+
+    if (atomic_load(&g_f_to_c_edges) != 1) {
+        return 5;
+    }
+    if (atomic_load(&g_f_takes) < 1 || atomic_load(&g_c_takes) < 1) {
+        return 6;
+    }
+    pthread_mutex_destroy(c_lock);
+    return 0;
+}
+
+/* Production-path case: drive decision / execution / publish with a real
+ * write + stop (format enabled, so both the PCM and the sidecar I/O paths run),
+ * then assert that no C acquisition happened while this thread held F.
+ * The bounded wait is fixture setup, not the judgement; the assertion is on
+ * lock ownership only. */
+static int run_isolated_lock_order_positive(void) {
+    dump_pcm_format_t fmt = {48000, 2, 16, DUMP_PCM_FORMAT_S16_LE};
+    dump_status_t status = {0};
+    int i = 0;
+
+    reset_test_dir();
+    tp_setenv("AUDIO_DUMP_ENABLED", "1");
+    logger_init(pc_log_fn);
+    logger_set_level(LOG_LEVEL_INFO);
+    dump_pcm_set_metadata_enabled(1);
+
+    lock_audit_reset();
+    dump_pcm_data_write_ex("stage-two-lock-order-probe", 25, "lock", "order", &fmt);
+    for (i = 0; i < 500; ++i) {
+        if (dump_pcm_data_get_status(&status) == 0 &&
+            status.queue_pending_blocks == 0) {
+            break;
+        }
+        usleep(1000);
+    }
+    dump_pcm_data_stop("lock", "order");
+    usleep(100000);
+    atomic_store(&g_lock_audit_active, 0);
+
+    if (atomic_load(&g_f_takes) < 2) {
+        return 2; /* the audit never saw the file-manager path */
+    }
+    if (atomic_load(&g_c_takes) < 3) {
+        return 3; /* decision + publish + stop never ran */
+    }
+    if (atomic_load(&g_f_to_c_edges) != 0) {
+        return 4; /* L1 / L2 violated on the production path */
+    }
+    return 0;
+}
+
+static void test_lock_order_negative_control(void) {
+    const char *name = "lock order audit detects a manufactured F->C edge";
+    static const char *const env[] = {
+        "AUDIO_DUMP_ENABLED=1",
+        "AUDIO_DUMP_RUN_LOCK_ORDER_NEGATIVE_TEST=1", NULL};
+
+    run_isolated_case(name, env, "audit did not detect the manufactured F->C edge");
+}
+
+static void test_lock_order_production_path(void) {
+    const char *name = "three-phase writer takes C only after releasing F";
+    static const char *const env[] = {
+        "AUDIO_DUMP_ENABLED=1",
+        "AUDIO_DUMP_RUN_LOCK_ORDER_POSITIVE_TEST=1", NULL};
+
+    run_isolated_case(name, env, "production path produced an F->C edge");
+}
+
 static const test_case_t g_cases[] = {
     {"test_string_key_write_and_escape", test_string_key_write_and_escape},
     {"test_key_validation", test_key_validation},
@@ -3570,10 +3730,12 @@ static const test_case_t g_cases[] = {
     {"test_whitebox_coverage_shim", test_whitebox_coverage_shim},
     {"test_retention_reapplies_within_one_process",
      test_retention_reapplies_within_one_process},
+    {"test_lock_order_negative_control", test_lock_order_negative_control},
+    {"test_lock_order_production_path", test_lock_order_production_path},
 };
 
-_Static_assert(sizeof(g_cases) / sizeof(g_cases[0]) == 67,
-               "the suite must register exactly 66 cases");
+_Static_assert(sizeof(g_cases) / sizeof(g_cases[0]) == 69,
+               "the suite must register exactly 69 cases");
 
 int main(int argc, char **argv) {
     const char *base_dir = NULL;
@@ -3590,6 +3752,14 @@ int main(int argc, char **argv) {
      * not-yet-initialised module accepts the root; an already-initialised one
      * ignores it, which is why this has to be first. */
     file_mgr_set_root_dir(tp_test_root());
+
+    if (getenv("AUDIO_DUMP_RUN_LOCK_ORDER_NEGATIVE_TEST") != NULL) {
+        return run_isolated_lock_order_negative();
+    }
+
+    if (getenv("AUDIO_DUMP_RUN_LOCK_ORDER_POSITIVE_TEST") != NULL) {
+        return run_isolated_lock_order_positive();
+    }
 
     if (getenv("AUDIO_DUMP_RUN_PTHREAD_CREATE_TEST") != NULL) {
         return run_isolated_pthread_create_failure_retry();

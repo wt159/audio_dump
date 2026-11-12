@@ -80,6 +80,8 @@ if(DUMP_PCM_BUILD_TESTS)
         -Wl,--wrap=realloc
         -Wl,--wrap=queue_pop
         -Wl,--wrap=pthread_mutex_init
+        -Wl,--wrap=pthread_mutex_lock
+        -Wl,--wrap=pthread_mutex_unlock
         -Wl,--wrap=pthread_condattr_init
         -Wl,--wrap=pthread_condattr_setclock
         -Wl,--wrap=pthread_cond_init

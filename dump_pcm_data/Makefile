@@ -4,7 +4,7 @@ CC = gcc
 # as builtins and the call sequence changes, so an injection meant for the
 # second allocation lands somewhere else and the case fails for no good reason.
 CFLAGS = -Wall -Wextra -std=c11 -g -fno-builtin-malloc -fno-builtin-calloc -fno-builtin-realloc -Iinclude -Isrc -DDUMP_PCM_PC -D_POSIX_C_SOURCE=200809L -fprofile-arcs -ftest-coverage
-LDFLAGS = -lpthread -fprofile-arcs -ftest-coverage -Wl,--wrap=malloc -Wl,--wrap=calloc -Wl,--wrap=realloc -Wl,--wrap=queue_pop -Wl,--wrap=pthread_mutex_init -Wl,--wrap=pthread_condattr_init -Wl,--wrap=pthread_condattr_setclock -Wl,--wrap=pthread_cond_init -Wl,--wrap=pthread_cond_timedwait -Wl,--wrap=opendir
+LDFLAGS = -lpthread -fprofile-arcs -ftest-coverage -Wl,--wrap=malloc -Wl,--wrap=calloc -Wl,--wrap=realloc -Wl,--wrap=queue_pop -Wl,--wrap=pthread_mutex_init -Wl,--wrap=pthread_mutex_lock -Wl,--wrap=pthread_mutex_unlock -Wl,--wrap=pthread_condattr_init -Wl,--wrap=pthread_condattr_setclock -Wl,--wrap=pthread_cond_init -Wl,--wrap=pthread_cond_timedwait -Wl,--wrap=opendir
 
 SRC = src/logger.c src/queue.c src/session.c src/file_mgr.c src/dump_control.c src/dump_writer.c src/sidecar.c src/dump_pcm_data.c
 BUILD_DIR = build
