@@ -173,6 +173,7 @@ int dump_pcm_data_get_status(dump_status_t *status) {
     status->queue_pending_blocks = queue_count(&g_ctx.queue);
     status->queue_pending_bytes = queue_bytes(&g_ctx.queue);
     status->active_session_count = count_active_sessions_locked();
+    status->dropped_blocks = atomic_load(&g_dropped_blocks);
     pthread_mutex_unlock(&g_ctx.mutex);
     return 0;
 }

@@ -48,6 +48,7 @@
 #define g_init_cond g_init_cond__whitebox
 #define g_init_state g_init_state__whitebox
 #define g_enabled_override g_enabled_override__whitebox
+#define g_dropped_blocks g_dropped_blocks__whitebox
 #define g_last_init_fail_ms g_last_init_fail_ms__whitebox
 #define g_storage_mutex g_storage_mutex__whitebox
 #define g_dump_storage_query_fn g_dump_storage_query_fn__whitebox
