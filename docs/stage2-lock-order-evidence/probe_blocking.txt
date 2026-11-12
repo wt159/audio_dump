@@ -1,0 +1,38 @@
+# Stage-2 section 13.2 blocking-amplification probe, archived verbatim output.
+# Toolchain: MinGW-w64 7.3 (D:/Qt/Tools/mingw730_64/bin), Windows, C11 -O0.
+# Baseline: main = 7ff56db (PR #55 merged, three-phase writer).
+# Command:  cd dump_pcm_data && sh tools/run_blocking_probe.sh
+# Two consecutive runs, same binary, fresh root directory per run.
+# Interpretation and deviations: docs/stage2-lock-order-probe.md
+
+===== RUN 1 =====
+[config] samples=2000 warmup_skip=10 caller_interval=1000us session_interval=100000us queue_limit=production(default) root=build/blocking_probe_io/run_50060
+[limits] baseline<=2000us injected<=10000us blocked>=10ms=0 dropped_delta<=20 fc_edges=0
+[group] main face=pcm seq=0 delay=0ms caller_max=100us blocked>=10ms=0 dropped=0 pcm_hits=0 sidecar_hits=0
+[group] main face=pcm seq=1 delay=20ms caller_max=88us blocked>=10ms=0 dropped=0 pcm_hits=20 sidecar_hits=0
+[group] main face=pcm seq=2 delay=0ms caller_max=122us blocked>=10ms=0 dropped=0 pcm_hits=0 sidecar_hits=0
+[group] main face=pcm seq=3 delay=20ms caller_max=127us blocked>=10ms=0 dropped=0 pcm_hits=20 sidecar_hits=0
+[group] main face=sidecar seq=0 delay=0ms caller_max=242us blocked>=10ms=0 dropped=0 pcm_hits=0 sidecar_hits=0
+[group] main face=sidecar seq=1 delay=20ms caller_max=187us blocked>=10ms=0 dropped=0 pcm_hits=0 sidecar_hits=31
+[group] main face=sidecar seq=2 delay=0ms caller_max=259us blocked>=10ms=0 dropped=0 pcm_hits=0 sidecar_hits=0
+[group] main face=sidecar seq=3 delay=20ms caller_max=94us blocked>=10ms=0 dropped=0 pcm_hits=0 sidecar_hits=31
+[group] reverse face=sidecar seq=4 delay=20ms caller_max=64us blocked>=10ms=0 dropped=0 pcm_hits=0 sidecar_hits=31
+[reverse] sidecar_json_before=154 sidecar_json_after=170
+[audit] F->C edges=0 (expected 0, ABBA=no)
+RESULT: PASS (0 failures)
+
+===== RUN 2 =====
+[config] samples=2000 warmup_skip=10 caller_interval=1000us session_interval=100000us queue_limit=production(default) root=build/blocking_probe_io/run_20524
+[limits] baseline<=2000us injected<=10000us blocked>=10ms=0 dropped_delta<=20 fc_edges=0
+[group] main face=pcm seq=0 delay=0ms caller_max=134us blocked>=10ms=0 dropped=0 pcm_hits=0 sidecar_hits=0
+[group] main face=pcm seq=1 delay=20ms caller_max=98us blocked>=10ms=0 dropped=0 pcm_hits=20 sidecar_hits=0
+[group] main face=pcm seq=2 delay=0ms caller_max=108us blocked>=10ms=0 dropped=0 pcm_hits=0 sidecar_hits=0
+[group] main face=pcm seq=3 delay=20ms caller_max=216us blocked>=10ms=0 dropped=0 pcm_hits=20 sidecar_hits=0
+[group] main face=sidecar seq=0 delay=0ms caller_max=197us blocked>=10ms=0 dropped=0 pcm_hits=0 sidecar_hits=0
+[group] main face=sidecar seq=1 delay=20ms caller_max=98us blocked>=10ms=0 dropped=0 pcm_hits=0 sidecar_hits=31
+[group] main face=sidecar seq=2 delay=0ms caller_max=127us blocked>=10ms=0 dropped=0 pcm_hits=0 sidecar_hits=0
+[group] main face=sidecar seq=3 delay=20ms caller_max=207us blocked>=10ms=0 dropped=0 pcm_hits=0 sidecar_hits=31
+[group] reverse face=sidecar seq=4 delay=20ms caller_max=94us blocked>=10ms=0 dropped=0 pcm_hits=0 sidecar_hits=31
+[reverse] sidecar_json_before=153 sidecar_json_after=169
+[audit] F->C edges=0 (expected 0, ABBA=no)
+RESULT: PASS (0 failures)
