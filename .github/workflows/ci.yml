@@ -80,6 +80,20 @@ jobs:
             -DCMAKE_C_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer -g" \
             -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined"
           cmake --build build/san
+
+          # Positive control: a green run is worthless if the flags never
+          # reached the compiler. The suite is mostly I/O and sleeps, so an
+          # instrumented run is barely slower than a plain one - the timing
+          # cannot tell you whether this job is doing anything.
+          if ! nm build/san/dump_pcm_test | grep -q '__asan_init'; then
+            echo "::error::the test binary is not instrumented with ASan"
+            exit 1
+          fi
+          if ! nm build/san/dump_pcm_test | grep -q '__ubsan_handle'; then
+            echo "::error::the test binary is not instrumented with UBSan"
+            exit 1
+          fi
+
           ctest --test-dir build/san --output-on-failure
 
   mingw-compile:
