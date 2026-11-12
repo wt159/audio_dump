@@ -60,6 +60,15 @@ if(DUMP_PCM_BUILD_TESTS)
     target_compile_features(dump_pcm_test PRIVATE c_std_11)
     target_compile_definitions(dump_pcm_test PRIVATE DUMP_PCM_PC _POSIX_C_SOURCE=200809L)
 
+    # The allocator fault-injection cases intercept malloc/calloc/realloc with
+    # --wrap, which only redirects real symbol references. Left to its own
+    # devices at -O2 gcc treats them as builtins and reorders or elides the
+    # calls, so an injection meant for the second allocation lands elsewhere.
+    if(NOT MSVC)
+        target_compile_options(dump_pcm_test PRIVATE
+            -fno-builtin-malloc -fno-builtin-calloc -fno-builtin-realloc)
+    endif()
+
     target_link_libraries(dump_pcm_test PRIVATE audio_dump)
 
     # Link-time fault injection. Every symbol below has to stay interceptable,
