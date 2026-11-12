@@ -1,7 +1,7 @@
 # 跨平台接入实施方案（Issue #1）
 
 - 关联：GitHub Issue #1《跨平台接入需求：Windows/MinGW 构建、运行时开关与关闭态零副作用》
-- 状态：方案已落盘，待评审；代码未改动
+- 状态：**方案已全部落地**。PR0–PR3 已合并（#3 / #4 / #5 / #7 / #9）；D4 元数据 sidecar 已实现（#14 设计 / #16 JSON / #19 open+finalize / #21 D4-C 测试）；其后的阶段一、阶段二锁序重构亦已完成（#47、#54、#55、#56）。本文作为方案与决策记录保留，状态表与代码索引已按 `main = 65d70ff` 校准。
 - 日期：2026-11-08
 - 验证基线：`cd dump_pcm_data && make && make run && make coverage`
 
@@ -284,7 +284,7 @@ G-01 属于既有缺陷，与本方案无关，但不修它后续所有 PR 都�
 | PR1 | D-01 时钟统一 + D-02 开关门控 + D-03 I/O 下沉 + C3 语义 | 实现 + T-01/T-02/T-03 + 既有 failpoint 用例拆分 | ✅ 已合并（PR #3 / #4 / #5） |
 | PR2 | D-06 拆头与存储抽象 + D-07 mkdir 宏 | 实现 + 测试桩迁移 + C2 匹配收紧 + T-06 | ✅ 已合并（PR #7）；MinGW job 转为必过门禁 |
 | PR3 | D-04 开关 + D-05 根目录 + D-09 CMake/MinGW + D-08 观测宏 | 实现 + T-04/T-05/T-07/T-08 + AGENTS.md | ✅ 已合并（PR #9）；观测接口为 opt-in，默认仍不导出 |
-| 另立项 | D4 元数据 sidecar | 先定义元数据输入契约 | ⏳ |
+| 另立项 | D4 元数据 sidecar | 先定义元数据输入契约 | ✅ 已合并（PR #14 / #16 / #19 + #21）；sidecar 默认关闭，HAL 调用方式不变 |
 
 每个 PR 独立可回滚。PR0 最先合入；PR1 不依赖 Windows/MinGW 环境，但需要 Linux 或 WSL 跑三件套。
 
@@ -305,8 +305,9 @@ G-01 属于既有缺陷，与本方案无关，但不修它后续所有 PR 都�
 ## 9. 待确认项
 
 1. **`check_storage()` 的 statvfs 是否完全下沉到写线程**：需要跨线程周期任务，本期保留 1 秒缓存的同步调用。
-2. **D4 sidecar 的元数据输入契约**：设计草案已单独成文，见 `docs/d4-sidecar-design.md`
-   （新增 `dump_pcm_data_write_ex()` 携带格式、sidecar 按文件粒度、默认关闭、HAL 调用方式不变）。
+2. **D4 sidecar 的元数据输入契约**：**已定稿并实现**。设计见 `docs/d4-sidecar-design.md`
+   （新增 `dump_pcm_data_write_ex()` 携带格式、sidecar 按文件粒度、默认关闭、HAL 调用方式不变），
+   实现见 PR #16 / #19，测试见 PR #21。
 3. **观测接口是否需要默认导出**：本期用编译宏满足接入方，若后续要求默认导出，需正式修改两个契约脚本与 design.md。
 4. **写线程落盘不可用后的重试策略**：本期不重试，避免在故障目录上反复扫描。
 
@@ -314,14 +315,20 @@ G-01 属于既有缺陷，与本方案无关，但不修它后续所有 PR 都�
 
 ## 10. 关键代码位置索引
 
+> 行号随重构漂移，**以符号名为准**。本表在阶段二三段式 writer 合入后（`main = 65d70ff`）重新校准过一次。
+
 | 位置 | 内容 |
 |---|---|
-| `src/dump_pcm_data.c:62-116` | `do_init_once()`，含 setclock(:75)、cleanup(:103)、建线程(:104) |
-| `src/dump_pcm_data.c:159-238` | `dump_pcm_data_write()`，init(:166) 先于 enabled(:173) |
-| `src/dump_writer.c:56-66` | 写线程等待，:59 用 `CLOCK_MONOTONIC` 算 deadline |
-| `src/dump_control.c:26-87` | `check_storage()`，同步 statvfs，1 秒缓存 |
-| `src/dump_control.c:89-124` | `check_enabled()`，含低存储锁存上升沿清除 |
-| `src/file_mgr.c:52-109` | `ensure_dir_exists`，:84/:103 双参数 mkdir |
-| `src/file_mgr.c:316-395` | `file_mgr_cleanup`，:336 使用 `strstr(".pcm")` |
-| `include/dump_pcm_data.h:7,40-49` | 公开头的 statvfs 依赖与测试注入点 |
-| `test/main.c:283-288,2161-2189` | setclock 故障注入与 init 失败断言 |
+| `src/dump_pcm_data.c:71` | `do_init_once()`，含 cond clock 回退、建写线程、`atexit(shutdown_module)` |
+| `src/dump_pcm_data.c:175` / `:279` | `dump_pcm_data_write_ex()` 主体 / `dump_pcm_data_write()` 薄包装；`check_enabled()` 先于 `ensure_initialized()` |
+| `src/dump_pcm_data.c:46` | `shutdown_module()`：join 写线程后**锁外**调用 `file_mgr_destroy()`（L4） |
+| `src/dump_writer.c:242` | `writer_thread_func()`；等待循环的 `pthread_cond_timedwait` 在 `:274`，用 `g_ctx.cond_clock_id` |
+| `src/dump_writer.c:147` | `execute_block()`：执行段，全程不持 C/F/I 做阻塞 I/O |
+| `src/dump_writer.c:33` | `run_deferred_close()`：锁外 `fclose` + final sidecar |
+| `src/dump_control.c:67` | `check_storage()`，同步探测 + 1 秒缓存 |
+| `src/dump_control.c:130` | `check_enabled()`，含低存储锁存上升沿清除 |
+| `src/file_mgr.c:70` | `ensure_dir_exists`，`DUMP_MKDIR` 平台宏 |
+| `src/file_mgr.c:951` | `file_mgr_cleanup`，保留期扫描与排序 |
+| `include/dump_pcm_data.h:15` | `dump_pcm_data_write` 声明；公开头已不含 `<sys/statvfs.h>` / `<pthread.h>` |
+| `include/dump_pcm_data.h:87` | 观测接口的 `DUMP_PCM_INTERNAL_DEBUG_API` / `DUMP_PCM_DESKTOP_OBSERVE` 门控 |
+| `test/main.c:275,319` | `__wrap_pthread_condattr_setclock`，构造并断言 cond clock 回退路径 |

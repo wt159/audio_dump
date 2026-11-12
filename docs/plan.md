@@ -1,6 +1,6 @@
 # PCM Dump 模块实施计划
 
-## 阶段一：PC 端核心功能开发（已覆盖主线，2 秒会话切分语义待补）
+## 阶段一：PC 端核心功能开发（已完成）
 
 ### 1.1 后台写线程完善
 | 任务 | 描述 | 状态 |
@@ -8,8 +8,8 @@
 | 1.1.1 | 后台写线程启动（已在 init 中添加 pthread_create） | ✅ |
 | 1.1.2 | 后台写线程从队列消费数据并写入文件 | ✅ |
 | 1.1.3 | 条件变量唤醒 + 轮询保底机制 | ✅ |
-| 1.1.4 | 以 `dump_pcm_data_write()` 调用进入时间为准，补齐同 key 间隔 > 2 秒的隐式 stop + 新会话切分 | ⏳ 未完成 |
-| 1.1.5 | 保证显式 `dump_pcm_data_stop()` 后，同 key 的下一次 `write` 一定开启新会话/新文件 | ⏳ 未完成 |
+| 1.1.4 | 以 `dump_pcm_data_write()` 调用进入时间为准，补齐同 key 间隔 > 2 秒的隐式 stop + 新会话切分 | ✅ 已实现（`SESSION_ROLLOVER_GAP_MS = 2000`；用例 `test_write_gap_over_two_seconds_creates_new_file`、边界 `test_write_gap_exactly_two_seconds_keeps_same_file`） |
+| 1.1.5 | 保证显式 `dump_pcm_data_stop()` 后，同 key 的下一次 `write` 一定开启新会话/新文件 | ✅ 已实现（用例 `test_stop_then_new_session_creates_new_file`） |
 
 ### 1.2 dump_pcm_data_stop() 完善
 | 任务 | 描述 | 状态 |
@@ -17,7 +17,7 @@
 | 1.2.1 | 标记会话为停止接收状态，并确保只影响 key1/key2 精确匹配的那条流 | ✅ |
 | 1.2.2 | 等待队列中该会话数据处理完毕 | ✅ |
 | 1.2.3 | 关闭文件句柄 | ✅ |
-| 1.2.4 | 验证隐式 stop 和显式 stop 的语义一致，避免把 2 秒规则误实现成 5 秒会话超时 | ⏳ 未完成 |
+| 1.2.4 | 验证隐式 stop 和显式 stop 的语义一致，避免把 2 秒规则误实现成 5 秒会话超时 | ✅ 已实现：2 秒切分（`SESSION_ROLLOVER_GAP_MS`）与 5 秒句柄 LRU（`IDLE_TIMEOUT_SEC`）分离，由 1.1.4 / 1.1.5 的用例共同覆盖 |
 
 ### 1.3 文件管理完善
 | 任务 | 描述 | 状态 |

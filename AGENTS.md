@@ -34,6 +34,7 @@
 - Windows full suite: `cd dump_pcm_data && sh test/run_full_windows.sh` (native MinGW; `MINGW_BIN` overrides the toolchain, `USE_CMAKE=1` builds through CMake instead of a direct `gcc` line)
 - Windows suite through CTest: `cmake -S . -B build/win -G "MinGW Makefiles" -DDUMP_PCM_BUILD_TESTS=ON && cmake --build build/win && ctest --test-dir build/win --output-on-failure`
 - Focused PC retry check: `AUDIO_DUMP_RUN_PTHREAD_CREATE_TEST=1 ./dump_pcm_test`
+- Blocking-amplification probe (spec §13.2, auxiliary criterion): `cd dump_pcm_data && sh tools/run_blocking_probe.sh`. It is a standalone binary with its own `--wrap=fopen` list and the production default config, deliberately **not** a CI gate; it prints `RESULT: PASS/FAIL` and exits non-zero on a threshold breach. Its constants are pinned in-tree by `test/check_blocking_probe.sh` (run through `make check-contracts`), so CI only checks that the probe has not drifted.
 - Android build: `cd dump_pcm_data && mm`
 
 ## Runtime knobs
