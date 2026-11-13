@@ -1,8 +1,11 @@
 # Coverage ratchet baseline — see docs/test-gap-spec.md §6.2.
 # Format: <source file> <lines executed, permille> <executable lines>.
-# Calibrated against the CI image's gcc 15 output; a new image or compiler is a
-# re-baseline event, not a regression. To regenerate, delete this file and run
-# `make coverage coverage-ratchet`, which prints the current numbers.
+# Calibrated against the CI image's gcc 15 output; the executable-line column is
+# what tells a re-baseline event apart from a regression — same denominator and
+# a lower permille is a regression, a different denominator means the
+# measurement changed shape.
+# Regenerate with `COVERAGE_REBASELINE=1 sh test/check_coverage_ratchet.sh`
+# after a toolchain or flags change, then commit what it writes.
 src/dump_control.c 981 107
 src/dump_pcm_data.c 971 204
 src/dump_writer.c 945 181

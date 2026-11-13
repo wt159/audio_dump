@@ -7,8 +7,18 @@ set -eu
 # (the same queue.c reads 82.14% of 84 at -O0 and 86.49% of 74 at -O2), and a
 # multi-threaded suite does not hit exactly the same lines every run.
 #
-# The baseline stores permille, not percentages, and never the .gcov body: that
-# body carries Runs/Graph/Data lines that change on every run.
+# So the comparison has two axes, and they mean different things:
+#
+#   same denominator, lower permille  -> a regression: lines that used to be
+#                                        hit no longer are.
+#   different denominator             -> the measurement changed shape. Either
+#                                        the TU gained or lost executable lines,
+#                                        or a different compiler/flags produced
+#                                        the report. Re-baselining is the right
+#                                        response to the second case only.
+#
+# The baseline stores permille and the executable-line count, never the .gcov
+# body: that body carries Runs/Graph/Data lines that change on every run.
 #
 # The numbers come from gcov's stdout, which `make coverage` saves next to the
 # .gcov files. They cannot come from the .gcov body: gcov only writes the
@@ -74,6 +84,30 @@ if [ "$got" -ne "$PROD_COUNT" ]; then
     exit 1
 fi
 
+# Reported on every run, pass or fail: when a re-baseline question comes up, the
+# first thing worth knowing is which gcov produced the numbers being compared.
+GCOV_VERSION=$(gcov --version 2>/dev/null | head -1 || true)
+[ -n "$GCOV_VERSION" ] || GCOV_VERSION="unknown gcov"
+
+if [ "${COVERAGE_REBASELINE:-0}" = "1" ]; then
+    cp "$BASELINE" "$BASELINE.pre-rebaseline" 2>/dev/null || true
+    {
+        echo "# Coverage ratchet baseline — see docs/test-gap-spec.md §6.2."
+        echo "# Format: <source file> <lines executed, permille> <executable lines>."
+        echo "# Calibrated against: $GCOV_VERSION"
+        echo "# Regenerate with COVERAGE_REBASELINE=1 sh test/check_coverage_ratchet.sh"
+        echo "# after the toolchain or the code changed shape — never to silence a"
+        echo "# same-denominator regression."
+        cat "$tmp"
+    } > "$BASELINE"
+    echo "coverage ratchet: re-baselined against $GCOV_VERSION"
+    if [ -f "$BASELINE.pre-rebaseline" ]; then
+        echo "  previous baseline kept at $BASELINE.pre-rebaseline (delete it, it is not committed)"
+    fi
+    echo "  commit $BASELINE so the gate compares against the new numbers"
+    exit 0
+fi
+
 if [ ! -f "$BASELINE" ]; then
     echo "coverage ratchet: no baseline yet ($BASELINE). Current numbers:"
     echo "# <file> <permille> <executable lines>"
@@ -82,33 +116,50 @@ if [ ! -f "$BASELINE" ]; then
     exit 0
 fi
 
-if ! awk -v tol="$TOL" '
+if ! output=$(awk -v tol="$TOL" '
     $1 ~ /^#/ { next }
-    NR == FNR { base[$1] = $2; next }
-    { cur[$1] = $2 }
+    FNR == NR { base_p[$1] = $2; base_l[$1] = $3; next }
+    { cur_p[$1] = $2; cur_l[$1] = $3 }
     END {
         bad = 0
-        for (f in base) {
-            if (!(f in cur)) {
+        for (f in base_p) {
+            if (!(f in cur_p)) {
                 printf "ratchet: %s vanished from the coverage report\n", f
                 bad = 1
                 continue
             }
-            if (cur[f] + tol < base[f]) {
-                printf "ratchet: %s fell from %d to %d permille\n", f, base[f], cur[f]
+            dropped = cur_p[f] + tol < base_p[f]
+            reshaped = cur_l[f] != base_l[f]
+            if (dropped && reshaped) {
+                printf "ratchet: %s changed shape AND fell: %d -> %d executable lines, %d -> %d permille\n", \
+                    f, base_l[f], cur_l[f], base_p[f], cur_p[f]
+                printf "  if the toolchain or the flags changed, re-baseline; if this TU gained code, the new lines are untested\n"
                 bad = 1
+            } else if (dropped) {
+                lost = int((base_p[f] - cur_p[f]) * base_l[f] / 1000 + 0.5)
+                printf "ratchet: %s regressed: %d of %d executable lines stopped being hit (%d -> %d permille)\n", \
+                    f, lost, base_l[f], base_p[f], cur_p[f]
+                bad = 1
+            } else if (reshaped) {
+                printf "note: %s changed shape but held: %d -> %d executable lines, %d -> %d permille\n", \
+                    f, base_l[f], cur_l[f], base_p[f], cur_p[f]
             }
         }
-        for (f in cur) {
-            if (!(f in base)) {
-                printf "ratchet: %s is not in the baseline (%d permille)\n", f, cur[f]
+        for (f in cur_p) {
+            if (!(f in base_p)) {
+                printf "ratchet: %s is not in the baseline (%d permille)\n", f, cur_p[f]
             }
         }
         exit bad
     }
-' "$BASELINE" "$tmp"; then
-    echo "coverage ratchet: FAILED (tolerance ${TOL} permille)" >&2
+' "$BASELINE" "$tmp"); then
+    if [ -n "$output" ]; then printf '%s\n' "$output" >&2; fi
+    echo "coverage ratchet: FAILED (tolerance ${TOL} permille, $GCOV_VERSION)" >&2
+    echo "  a same-denominator drop is a regression and must be fixed, not re-baselined" >&2
+    echo "  a denominator change after a compiler/flags change is a re-baseline event:" >&2
+    echo "    COVERAGE_REBASELINE=1 sh test/check_coverage_ratchet.sh" >&2
     exit 1
 fi
 
-echo "coverage ratchet: ok"
+if [ -n "$output" ]; then printf '%s\n' "$output"; fi
+echo "coverage ratchet: ok ($GCOV_VERSION)"

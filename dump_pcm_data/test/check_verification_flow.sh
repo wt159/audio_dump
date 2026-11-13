@@ -31,3 +31,11 @@ sh "$SCRIPT_DIR/check_blocking_probe.sh"
 # compiled on their own because the PC suite never instantiates them.
 sh "$SCRIPT_DIR/check_test_matrix.sh"
 sh "$SCRIPT_DIR/check_config_limits.sh"
+
+# The ratchet classifies a drop as a regression or as a change of shape, and
+# neither situation can be produced by the real suite (the first would mean
+# deleting coverage, the second needs a different compiler). The fixture
+# self-test is the only thing that keeps those three answers distinct, and the
+# re-baseline knob is the only sanctioned way to move the target.
+sh "$SCRIPT_DIR/check_coverage_ratchet_selftest.sh"
+grep -q 'COVERAGE_REBASELINE' test/check_coverage_ratchet.sh
