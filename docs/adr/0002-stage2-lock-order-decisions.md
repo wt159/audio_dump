@@ -37,3 +37,13 @@
 **证据等级**：取证是 `50ab3f8` 上链接生产源码的**最小草图**，条件性证实，不是 #45 已回退的实现。规格因此用 L1/L2 的可断言判据与回归用例钉住结论，而不是依赖复现历史实现。
 
 **边界**：本 ADR 与规格是地图的终点，**代码实施、发实施 PR、CI 变更均留给下游**；本仓库所有改动（含文档）须经 PR 合入 `main`。
+
+## Addendum（2026-11-13）：L5 关闭准入，#45 的残余窗口不可达
+
+实施完成后 [#45](https://github.com/wt159/audio_dump/issues/45) 仍被保留为 OPEN，理由是「PR #55 保留了一个跨 C 解锁窗口的 fp 生命周期竞态」。追查后该判断需要修正——**窗口不可达，不存在需要修的竞态**：
+
+三段式把 `fwrite` 移到了不持 F 的 `run_jobs()`，理论风险是「WRITE job 已 capture、尚未 run 时，另一线程把同一 `FILE *` `fclose` 掉」。逐条枚举生产路径的关闭发起者（规格 §8.1 表 7 行）后可见，`src/dump_writer.c` 里 `destroy_session_locked()` 只有两个调用点，且都要求持 C 观察到 `session->pending_blocks == 0`；唯一另一类关闭是槽位淘汰，而 `capture_open()` 在 `src/` 内只被写线程 `execute_block()` 调用，与写操作同线程顺序执行。`pending_blocks` 在 C 内 `queue_push` 成功后 +1、只在发布段 C 内 −1，因此「决策段 → 发布段」之间恒 `>= 1`，与上述门控互斥。
+
+由此新增 **L5（句柄关闭准入）**：`fclose` 只能由「持 C 且 `pending_blocks == 0`」或「对该 `FILE *` 独占所有权的线程」发起。这条不是新增约束，而是把实现里本就成立的准入条件显式化，并用静态判据（`test/check_lock_order.sh` 判据 9）钉住：`destroy_session_locked()` 的调用点必须恰好两个且都被门控，`capture_open()` 不得出现在写线程之外。
+
+**对本 ADR 的影响**：Decision 第 5 条「否决延迟销毁状态机」得到加强而非动摇——所需状态早已存在（`pending_blocks` + 两态状态机），无需新增 STOPPED/DESTROYING 态或周期扫描。「明确不做」清单不变。#45 因此可以关闭，关闭依据是 §8.1 的可达性论证 + 判据 9，而不是「范围外、不修」。

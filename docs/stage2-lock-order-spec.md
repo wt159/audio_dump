@@ -51,7 +51,9 @@
 
 > **L4（I/O 归属）** 任何阻塞型文件 I/O（`fopen` / `fwrite` / `fflush` / `fclose` / sidecar 的 open-write-rename / `opendir`-`stat`-`remove`）不得在持 C 或持 F 的区间内执行。F 只保护槽位表的纯内存读写；C 只保护 queue / session / 记账的纯内存读写。
 
-L1 是锁序边界（防 G1），L4 是 I/O 归属（防 G2）。`file_mgr.c:17-25` 现有注释只禁止 `F→X`、允许 `X→F`，与 L1 一致；阶段二要做的是**保住** L1 并**收紧**到 L4，而不是修一个已存在的环。
+> **L5（句柄关闭准入）** 一条会话句柄的 `fclose` 只能由两类主体发起：① 在**持 C** 且观察到 `session->pending_blocks == 0` 时才允许摘除该句柄（`stop_session_locked` 与写线程发布段）；② 对该 `FILE *` 具有**独占所有权**的线程（本线程刚 `fopen` 出、尚未发布的句柄；写线程独占的槽位淘汰；`file_mgr_destroy()` 在 join 写线程之后）。写线程自决策段到发布段之间的在飞 block 由 `pending_blocks >= 1` 钉住，因此外部线程的 stop / rollover 在该窗口内只能把会话置为 `STOPPING`，不能摘除句柄。
+
+L1 是锁序边界（防 G1），L4 是 I/O 归属（防 G2），L5 是句柄生命周期归属（防「capture 出 WRITE job 后，job 在 `run_jobs()` 里 `fwrite` 的同时另一线程 `fclose` 同一 `FILE *`」——这是 L1/L4 都不覆盖的第三类风险）。`file_mgr.c:17-25` 现有注释只禁止 `F→X`、允许 `X→F`，与 L1 一致；阶段二要做的是**保住** L1 并**收紧**到 L4，而不是修一个已存在的环。
 
 ---
 
@@ -238,6 +240,26 @@ void file_mgr_destroy(file_manager_t *);
 | stop 在决策段之后、发布段之前到达（`pending > 0`） | 发布段看到 `state == STOPPING`，仍完成记账与 `pending--`；归零时销毁（销毁的 I/O 走 job，C 外执行） |
 | `MAX_OPEN_FILES` 淘汰与并发 close 抢同一 fp | `capture_close` 在 F 内摘除槽位后，任何其他 capture 不得再为同一 fp 产出 WRITE job；job 自包含数据，不回引槽位 |
 
+### 8.1 关闭准入与残余窗口可达性（L5 的论证）
+
+三段式把 `fwrite` 放到了「不持 F」的 `run_jobs()` 里，因此必须回答一个问题：**一个已经 capture 出来、尚未 run 的 WRITE job，其目标 `FILE *` 会不会被别的线程关掉？** 若会，就是 `fwrite` 与 `fclose` 对同一 `FILE *` 的并发使用（未定义行为），属比 ABBA 更隐蔽的一类缺陷。逐条枚举生产路径的全部关闭发起者：
+
+| # | 关闭发起者 | 入口 | 准入条件 | 能否与在飞 WRITE job 重叠 |
+|---|---|---|---|---|
+| 1 | 调用方（`write_ex` 的 2 秒 rollover） | `stop_session_locked` → `destroy_session_locked` | C 内 `pending_blocks == 0` | 否：在飞 block 已计入 `pending_blocks` |
+| 2 | 调用方（`dump_pcm_data_stop`） | 同上 | C 内 `pending_blocks == 0` | 同上 |
+| 3 | 写线程（发布段） | `destroy_session_locked`（`dump_writer.c:339`） | C 内 `SESSION_STOPPING && pending_blocks == 0` | 否：本 block 先 `pending--` 再判零，后续 block 尚未被 capture |
+| 4 | 写线程（执行段 rollover） | `run_deferred_close(snap.fp_tag)` | 独占：本 block 是该句柄唯一写者 | 否：同线程、同一时刻只有一个在飞 block |
+| 5 | 写线程（发布段丢弃未发布的新句柄） | `run_deferred_close(pub.fp)` | 独占：刚 `fopen`、从未发布给任何会话 | 否：其他线程不可能持有该指针 |
+| 6 | 写线程（`capture_open` 内的槽位淘汰） | `close_idle_file_if_needed` | 写线程独占槽位表 | 否：与 `capture_write`/`run_jobs` 同线程顺序执行 |
+| 7 | `shutdown_module` | `file_mgr_destroy` | `pthread_join(writer)` 之后 | 否：写线程已退出 |
+
+**结论**：`file_mgr_capture_write()` 产出的 job 在 `run_jobs()` 里 `fwrite` 的整个区间内，不存在任何生产路径会并发 `fclose` 同一 `FILE *`。窗口不是靠「运气小」排除的，而是靠 `pending_blocks` 记账消除的：它在 C 内 `queue_push` 成功后 +1、只在发布段 C 内 −1，因此「决策段 → 发布段」之间该会话恒有 `pending_blocks >= 1`，而第 1/2/3 条关闭路径全部要求持 C 观察到 0。
+
+因此 [#45](https://github.com/wt159/audio_dump/issues/45) 记录的「跨 C 解锁窗口的 fp 生命周期竞态」**不是可达缺陷**，而是被该记账排除的窗口；ADR 0002 把它列为 Out of scope 的「延迟销毁状态机」也确实不需要——所需的状态已经存在（`pending_blocks` + 两态状态机）。L5 与 §12 判据 9 把这条准入钉在静态检查里，防止后续改动把 `destroy_session_locked` 挪出门控。
+
+**残留的理论边界**（如实记录，不视为缺陷）：`file_mgr_capture_write()` 对**无槽位**的 `fp` 仍会产出 `FM_JOB_WRITE`（保留旧 `file_mgr_write()` 对外来 fp 直接 `fwrite` 的兼容语义，测试夹具有约 90 处直调依赖它）。生产路径不会走到这里——`execute_block()` 的写目标来自会话快照，其槽位由 L5 保证在 run 期间仍有效；只有测试夹具会传入自造 `FILE *`，且夹具是单线程的。
+
 ---
 
 ## 9. 状态机（不变）
@@ -277,6 +299,7 @@ void file_mgr_destroy(file_manager_t *);
 2. 每个 `file_mgr_capture_*()` 的所有 return 分支都必须经过 `unlock(F)`；可用「函数内 lock 数 == unlock 数且每个出口可达」的静态检查或运行时断言。
 3. `file_mgr_run_job()` 内不得出现 `pthread_mutex_lock(&g_ctx.mutex)` / `g_init_mutex` / `g_storage_mutex`。
 4. 发布段的第一次 `lock(C)` 之前，本循环内 F 的引用计数必须为 0（由确定性用例在运行时断言，见 §13）。
+5. **L5 关闭准入**：`dump_writer.c` 中 `destroy_session_locked()` 的非定义调用点必须**恰好两个**，且每个都被 `pending_blocks == 0` 条件门控（一个在 `stop_session_locked` 内，一个在发布段的 `SESSION_STOPPING` 分支内）。同时 `file_mgr_capture_open()` 在 `src/` 内的非定义调用点必须唯一（写线程 `execute_block()`），因为槽位淘汰只允许发生在写线程上（见 §8.1 第 6 条）。实现为 `test/check_lock_order.sh` 的判据 9。
 
 ---
 

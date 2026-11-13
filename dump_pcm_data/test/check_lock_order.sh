@@ -9,9 +9,10 @@
 #       while C or F is held.
 #   POD jobs must not reach back into session_info_t.
 #
-# Checks 1-6 cover the file_mgr side (PR 1/2). Checks 7-8 cover the writer /
+# Checks 1-6 cover the file_mgr side (PR 1/2). Checks 7-9 cover the writer /
 # public-API side (PR 2/2): no C-held region may call file_mgr_* or do I/O,
-# and the execution phase may not acquire C at all.
+# the execution phase may not acquire C at all, and every handle close is
+# gated by pending_blocks == 0 (invariant L5, spec section 8.1).
 set -eu
 
 MODULE_DIR=$(cd "$(dirname "$0")/.." && pwd)
@@ -134,4 +135,47 @@ if printf '%s\n' "$DEFER_BODY" | grep -q 'pthread_mutex_lock(&g_ctx.mutex)'; the
     fail "run_deferred_close() acquires C (L2 violation)"
 fi
 
-printf 'lock-order contract: OK (6 capture sites, balanced F, I/O confined to run, no C-held I/O)\n'
+# 9. Invariant L5 (spec section 8.1): a session handle may only be detached and
+#    closed once pending_blocks == 0 was observed under C, or by the thread that
+#    exclusively owns it. Both production call sites of destroy_session_locked()
+#    must sit under that gate, and capture_open() -- which is the only place that
+#    evicts slots -- must run on the writer thread alone.
+WRITER="$MODULE_DIR/src/dump_writer.c"
+[ -f "$WRITER" ] || fail "missing $WRITER"
+if ! awk '
+    /^FILE \*destroy_session_locked\(/ { next }
+    /destroy_session_locked\(session\)/ {
+        calls++
+        if (index(prev1, "pending_blocks == 0") == 0 &&
+            index(prev2, "pending_blocks == 0") == 0 &&
+            index(prev3, "pending_blocks == 0") == 0) {
+            printf "dump_writer.c:%d: destroy_session_locked() outside a pending_blocks == 0 gate\n", NR > "/dev/stderr"
+            bad = 1
+        }
+    }
+    { prev3 = prev2; prev2 = prev1; prev1 = $0 }
+    END {
+        if (calls != 2) {
+            printf "dump_writer.c: expected 2 gated destroy_session_locked() call sites, found %d\n", calls > "/dev/stderr"
+            bad = 1
+        }
+        exit bad ? 1 : 0
+    }
+' "$WRITER"; then
+    fail "invariant L5 violated: a session handle can be closed with blocks in flight"
+fi
+
+for f in "$MODULE_DIR"/src/*.c; do
+    base=$(basename "$f")
+    hits=$(grep -c 'file_mgr_capture_open(' "$f" || true)
+    if [ "$hits" -eq 0 ]; then
+        continue
+    fi
+    if [ "$base" = "dump_writer.c" ]; then
+        [ "$hits" -eq 1 ] || fail "capture_open appears $hits times in the writer; slot eviction must stay on one thread"
+    elif [ "$base" != "file_mgr.c" ]; then
+        fail "$base calls file_mgr_capture_open(); slot eviction must stay on the writer thread"
+    fi
+done
+
+printf 'lock-order contract: OK (6 capture sites, balanced F, I/O confined to run, no C-held I/O, L5 close gate)\n'
