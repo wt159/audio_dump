@@ -11,11 +11,12 @@ dump_pcm_data/
 ├── src/
 │   ├── dump_pcm_data.c           # 运行时入口、开关、根目录、会话创建
 │   ├── dump_control.c            # 初始化、开关判断、存储检查、状态查询
-│   ├── dump_writer.c             # 写线程、rollover / 分片决策
+│   ├── dump_writer.c             # 写线程三段式：决策 / 执行 / 发布
 │   ├── dump_internal.h           # 内部上下文、常量
 │   ├── dump_test_hooks.h         # 仅测试使用的注入点（不安装）
-│   ├── file_mgr.c                # 文件创建、复用、关闭钩子、清理
+│   ├── file_mgr.c                # 槽位表、capture/run job、清理
 │   ├── file_mgr.h
+│   ├── file_mgr_job.h            # POD job 与会话快照（仅内部）
 │   ├── sidecar.c                 # 元数据 JSON 序列化与原子写
 │   ├── sidecar.h
 │   ├── session.c                 # 会话、格式捕获、文件动作决策
@@ -29,12 +30,23 @@ dump_pcm_data/
 │   ├── queue.c
 │   └── queue.h
 ├── test/
-│   ├── main.c                    # PC 测试入口
+│   ├── main.c                    # PC 测试入口（用例数由 _Static_assert 钉住）
 │   ├── whitebox.c                # 白盒覆盖补充
+│   ├── proc_iso.c                # 隔离用例的子进程执行（唯一 spawn 点）
+│   ├── test_plat.h               # 测试侧平台拼写（mkdir / setenv / 测试根）
+│   ├── windows_smoke.c           # Windows 运行期冒烟用例
+│   ├── header_*.c                # 公开头契约的三份编译单元（可见性 / 观测门控）
+│   ├── run_windows_smoke.sh      # Windows 冒烟
+│   ├── run_full_windows.sh       # Windows 全量套件
 │   ├── check_header_contract.sh  # 公开头契约
 │   ├── check_shared_library_exports.sh
-│   ├── check_verification_flow.sh
+│   ├── check_verification_flow.sh    # 汇总全部契约脚本
+│   ├── check_lock_order.sh       # 阶段二锁序静态判据（L1 / L2 / L4 / L5）
+│   ├── check_blocking_probe.sh   # §13.2 探针常量与构造契约
 │   └── check_docs_build_contract.sh
+├── tools/
+│   ├── lock_block_probe.c        # §13.2 阻塞放大探针（独立二进制）
+│   └── run_blocking_probe.sh     # 编译 + 运行 + 清理本次临时树
 ├── Android.mk                    # Android 编译文件
 ├── CMakeLists.txt                # CMake 静态库，可 opt-in 观测接口
 ├── Makefile                      # PC 编译 / 运行 / 覆盖率
@@ -141,6 +153,7 @@ typedef struct {
 ### 队列与写线程
 
 - 模块内部只有一个异步写线程。
+- 写线程把 `fopen` / `fwrite` / `fflush` / `fclose` 与 sidecar 写入全部放在模块锁之外执行：音频线程在锁内只做入队与记账，不会因为写线程正在落盘而在锁上排队。**例外**：发生 2 秒 rollover 或调用 `dump_pcm_data_stop()` 时，`fclose` 与 final sidecar 由调用线程在解锁之后自己执行——不占锁，但确实发生在该线程上。
 - Android 默认最多允许 `16` 个活跃会话，队列上限为 `800` 个 block / `512 MiB`。
 - PC 测试默认最多允许 `4` 个活跃会话，队列上限为 `8` 个 block / `64 KiB`。
 - 当 dump 未开启、低存储锁存、队列已满或会话无法创建时，当前 block 会被丢弃。
