@@ -20,7 +20,7 @@ WHITEBOX_OBJ = $(WHITEBOX_OBJ_DIR)/whitebox.o
 
 TARGET = dump_pcm_test
 
-.PHONY: all clean run test coverage check-contracts check-verification-flow check-header-contract check-docs-build-contract check-shared-library-exports
+.PHONY: all clean run test coverage coverage-ratchet check-contracts check-verification-flow check-header-contract check-docs-build-contract check-shared-library-exports
 
 all: $(TARGET)
 
@@ -42,6 +42,9 @@ $(WHITEBOX_OBJ_DIR)/%.o: test/%.c
 
 clean:
 	rm -rf $(BUILD_DIR) $(TARGET) *.gcno *.gcda *.gcov src/*.o src/*.gcno src/*.gcda src/*.gcov src/*.gcov test/*.o test/*.gcno test/*.gcda test/*.gcov
+
+coverage-ratchet:
+	@sh test/check_coverage_ratchet.sh
 
 check-verification-flow:
 	@sh test/check_verification_flow.sh
@@ -72,21 +75,21 @@ coverage: check-contracts all
 	@AUDIO_DUMP_ENABLED=1 AUDIO_DUMP_DIR=/tmp/audio_dump_test ./$(TARGET)
 	@echo "Generating coverage report..."
 	@true
-	@gcov -f -p -o $(OBJ_DIR) src/logger.c src/queue.c src/session.c src/file_mgr.c src/dump_control.c src/dump_writer.c src/sidecar.c src/dump_pcm_data.c || true
+	@gcov -f -p -o $(OBJ_DIR) src/logger.c src/queue.c src/session.c src/file_mgr.c src/dump_control.c src/dump_writer.c src/sidecar.c src/dump_pcm_data.c > $(PROD_COV_DIR)/gcov-summary.txt 2>&1 || true
 	@mv -f *.gcov $(PROD_COV_DIR)/ 2>/dev/null || true
 	@mv -f *#.gcov $(PROD_COV_DIR)/ 2>/dev/null || true
-	@gcov -f -p -o $(TEST_OBJ_DIR) test/main.c || true
+	@gcov -f -p -o $(TEST_OBJ_DIR) test/main.c > $(TEST_COV_DIR)/gcov-summary.txt 2>&1 || true
 	@mv -f *.gcov $(TEST_COV_DIR)/ 2>/dev/null || true
 	@mv -f *#.gcov $(TEST_COV_DIR)/ 2>/dev/null || true
-	@gcov -f -p -o $(WHITEBOX_OBJ_DIR) test/whitebox.c || true
+	@gcov -f -p -o $(WHITEBOX_OBJ_DIR) test/whitebox.c > $(WHITEBOX_COV_DIR)/gcov-summary.txt 2>&1 || true
 	@mv -f *.gcov $(WHITEBOX_COV_DIR)/ 2>/dev/null || true
 	@mv -f *#.gcov $(WHITEBOX_COV_DIR)/ 2>/dev/null || true
 	@echo ""
 	@echo "=== Production Coverage Summary ==="
-	@for f in $(PROD_COV_DIR)/*.gcov; do [ -f "$$f" ] && grep -h "^.*:" "$$f"; done || true
+	@cat $(PROD_COV_DIR)/gcov-summary.txt 2>/dev/null || true
 	@echo "=== Test Coverage Summary ==="
-	@for f in $(TEST_COV_DIR)/*.gcov; do [ -f "$$f" ] && grep -h "^.*:" "$$f"; done || true
+	@cat $(TEST_COV_DIR)/gcov-summary.txt 2>/dev/null || true
 	@echo "=== Whitebox Coverage Summary ==="
-	@for f in $(WHITEBOX_COV_DIR)/*.gcov; do [ -f "$$f" ] && grep -h "^.*:" "$$f"; done || true
+	@cat $(WHITEBOX_COV_DIR)/gcov-summary.txt 2>/dev/null || true
 	@echo "========================="
 	@exit 0

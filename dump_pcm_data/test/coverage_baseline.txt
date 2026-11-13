@@ -1,0 +1,13 @@
+# Coverage ratchet baseline — see docs/test-gap-spec.md §6.2.
+# Format: <source file> <lines executed, permille> <executable lines>.
+# Calibrated against the CI image's gcc 15 output; a new image or compiler is a
+# re-baseline event, not a regression. To regenerate, delete this file and run
+# `make coverage coverage-ratchet`, which prints the current numbers.
+src/dump_control.c 981 107
+src/dump_pcm_data.c 971 204
+src/dump_writer.c 945 181
+src/file_mgr.c 909 547
+src/logger.c 1000 26
+src/queue.c 1000 84
+src/session.c 985 134
+src/sidecar.c 769 199
