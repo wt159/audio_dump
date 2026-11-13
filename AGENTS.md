@@ -7,13 +7,15 @@
 ## Source of truth
 - Prefer executable config over prose. `dump_pcm_data/Makefile` and `dump_pcm_data/Android.mk` are authoritative.
 - The root docs are useful context, but they are not always current. Verify behavior in code before updating docs.
+- Test inventory: `docs/test-matrix.md` is the single source of truth for what the suite covers (case → plan item → assertion level → gap type → note), and `test/check_test_matrix.sh` fails when it disagrees with the case table in either direction. The criteria and acceptance conditions behind it are `docs/test-gap-spec.md`. `docs/plan.md` §2 is a pointer to both, not a list.
 
 ## 强制验证规则
-- 每次改动代码后，必须按顺序执行：编译 → 测试 → 覆盖率。
-- 对这个仓库，PC 端验证顺序就是 `make` → `make run` → `make coverage`。
+- 每次改动代码后，必须按顺序执行：编译 → 测试 → 覆盖率 → 棘轮。
+- 对这个仓库，PC 端验证顺序就是 `make` → `make run` → `make coverage` → `make coverage-ratchet`。
+- `make run` / `make coverage` 会先跑 `make check-contracts`（矩阵、生产限值、锁序、探针、文档、共享库导出），契约红就不进入测试。
 
 ## Environment and CI constraints
-- This workstation has no `gcc`/`make` on PATH and `wsl.exe` is blocked, but Qt 5.14.2 ships a MinGW-w64 7.3 toolchain at `D:/Qt/Tools/mingw730_64/bin`. It runs both the Windows smoke (`sh test/run_windows_smoke.sh`) and the complete suite (`sh test/run_full_windows.sh`); the harness no longer uses `fork`/`exec`, so nothing forces the suite onto Linux. `make` / `make run` / `make coverage` still need CI or a Linux host.
+- This workstation has no `gcc`/`make` on PATH and `wsl.exe` is blocked, but Qt 5.14.2 ships a MinGW-w64 7.3 toolchain at `D:/Qt/Tools/mingw730_64/bin`. It runs both the Windows smoke (`sh test/run_windows_smoke.sh`) and the complete suite (`sh test/run_full_windows.sh`); the harness no longer uses `fork`/`exec`, so nothing forces the suite onto Linux. `make` / `make run` / `make coverage` / `make coverage-ratchet` still need CI or a Linux host.
 - Never report a code change as locally verified unless the Windows smoke or CI actually ran.
 - `mingw-compile` is a required gate: it compiles every `src/*.c` for Windows on a bare command line (no harness, no `--wrap`, no link) and must stay green. It runs on `windows-latest` because apt-installing a cross toolchain onto `ubuntu-latest` stalled for over half an hour on three consecutive runners. Keep the public header free of POSIX-only includes instead of widening `continue-on-error`.
 - The shell's `HTTPS_PROXY` points at `127.0.0.1:64082`, which answers `502 Bad Gateway` for `github.com:443` while `api.github.com` still works. The real client listens on `127.0.0.1:7892` (Clash mixed port), and this repository sets `http.proxy` to it. Before falling back to the API replay trick, test: `curl -s -o /dev/null -w '%{http_code}\n' --proxy http://127.0.0.1:7892 https://github.com` (expect 200).
@@ -31,6 +33,7 @@
 - PC build: `cd dump_pcm_data && make`
 - PC smoke run: `cd dump_pcm_data && make run`
 - Coverage smoke: `cd dump_pcm_data && make coverage` (this prints gcov output and still exits 0)
+- Coverage ratchet: `cd dump_pcm_data && make coverage-ratchet`. It reads `build/coverage/prod/gcov-summary.txt`, which `make coverage` now saves from gcov's stdout, and compares the eight production translation units against `test/coverage_baseline.txt` in permille with a 0.5 pp tolerance; a drop exits non-zero and names the file with both numbers. It cannot read the `.gcov` bodies: gcov writes the `File '<path>'` / `Lines executed:` summary into them only on gcc 7, stdout alone from gcc 8 on. `COVERAGE_RATCHET=0` skips the gate for a local run. The baseline is calibrated to the CI image's gcc 15, so a new image or compiler is a re-baseline event (delete the file, run the two targets, commit what it prints), not a regression.
 - Windows full suite: `cd dump_pcm_data && sh test/run_full_windows.sh` (native MinGW; `MINGW_BIN` overrides the toolchain, `USE_CMAKE=1` builds through CMake instead of a direct `gcc` line)
 - Windows suite through CTest: `cmake -S . -B build/win -G "MinGW Makefiles" -DDUMP_PCM_BUILD_TESTS=ON && cmake --build build/win && ctest --test-dir build/win --output-on-failure`
 - Focused PC retry check: `AUDIO_DUMP_RUN_PTHREAD_CREATE_TEST=1 ./dump_pcm_test`

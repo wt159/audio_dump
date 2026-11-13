@@ -211,6 +211,9 @@ make test
 # 覆盖率输出
 make coverage
 
+# 覆盖率棘轮（下降即非 0 退出）
+make coverage-ratchet
+
 # 手工运行
 AUDIO_DUMP_ENABLED=1 AUDIO_DUMP_DIR=/tmp/audio_dump_test ./dump_pcm_test
 
@@ -223,6 +226,8 @@ cmake --build build/cmake
 
 - `make run` 会创建 `/tmp/audio_dump_test`，并在开启 dump 的状态下执行测试程序。
 - `make coverage` 会运行测试并打印 gcov 汇总，命令本身固定以 0 退出。
+- `make coverage-ratchet` 读 `make coverage` 存下的 `build/coverage/prod/gcov-summary.txt`，把 8 个生产 TU 的行覆盖率与 `test/coverage_baseline.txt` 按千分比比对（容差 0.5 pp），下降即非 0 退出并打印文件名与两个数字。基线绑定 CI 镜像的 gcc 15，换镜像或换编译器属**重标事件**而非回归。
+- 用例清单、断言级别与「确认不测」的理由见 [`../docs/test-matrix.md`](../docs/test-matrix.md)，判据与验收见 [`../docs/test-gap-spec.md`](../docs/test-gap-spec.md)。
 - 如果只想复现某些隔离测试，可直接运行 `dump_pcm_test` 并配合对应环境变量。
 
 ## Windows 运行期验证
