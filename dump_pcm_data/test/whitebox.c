@@ -103,5 +103,18 @@ int run_whitebox_coverage_shim(void) {
         shutdown_fn();
     }
 
+    /* The guards above are only worth running if they leave the module in the
+     * documented state: a module that was never enabled reports -1. Asserting
+     * it here is what keeps this case from being "call a few functions and
+     * return success". */
+    {
+        dump_status_t status;
+
+        memset(&status, 0, sizeof(status));
+        if (dump_pcm_data_get_status(&status) != -1) {
+            return -1;
+        }
+    }
+
     return 0;
 }

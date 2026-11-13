@@ -37,6 +37,14 @@ jobs:
         working-directory: dump_pcm_data
         run: make coverage
 
+      # Per-file line coverage may not fall below the committed baseline by more
+      # than the tolerance. Bootstrapping: with no baseline committed the script
+      # prints the current numbers and exits 0, so the first green run on a new
+      # image is how the baseline gets written.
+      - name: coverage ratchet
+        working-directory: dump_pcm_data
+        run: make coverage-ratchet
+
       # Verifies the CMake target, including the desktop observe opt-in and the
       # test target CTest registers.
       - name: CMake static library and test target
@@ -190,7 +198,11 @@ jobs:
             echo "::error::the suite passed against an unusable root - the fixture latch regressed"
             exit 1
           fi
-          if [ "$fails" -lt 40 ]; then
+          # Calibrated at 72 cases: an unusable root leaves exactly 51 FAIL and
+          # 21 PASS. The 21 are cases that never touch the filesystem plus the
+          # five that assert the absence of a side effect. Re-measure and update
+          # this floor whenever cases are added, or the gate drifts silently.
+          if [ "$fails" -lt 51 ]; then
             echo "::error::only $fails cases failed; the suite died early instead of asserting"
             exit 1
           fi

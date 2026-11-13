@@ -14,3 +14,8 @@ sh "$SCRIPT_DIR/check_lock_order.sh"
 # diagnostic, not a CI gate. Keep its in-tree constants pinned to the spec so it
 # cannot silently drift from the four-group / two-face contract.
 sh "$SCRIPT_DIR/check_blocking_probe.sh"
+
+# Coverage truth lives in docs/test-matrix.md; the production limits are
+# compiled on their own because the PC suite never instantiates them.
+sh "$SCRIPT_DIR/check_test_matrix.sh"
+sh "$SCRIPT_DIR/check_config_limits.sh"

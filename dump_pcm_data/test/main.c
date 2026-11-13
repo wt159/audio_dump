@@ -39,14 +39,16 @@ static int g_test_dir_seq = 0;
  * report PASS for having observed nothing.
  *
  * Measured with a root whose parent is a regular file, so no case can create
- * its directory: 46 of 66 fail and 20 still pass. Sixteen of those never touch
+ * its directory: 51 of 72 fail and 21 still pass. Sixteen of those never touch
  * the filesystem; one asserts that a write to an unusable path fails, which a
- * broken root only makes more true. The remaining three assert the *absence*
- * of a side effect - `init failure path`, `init do_init failures`,
- * `disabled write has no side effects` - and cannot tell "nothing happened"
- * from "nothing could happen". They stay honest only because a broken root
- * turns most of the suite red first. Do not read their PASS as evidence that
- * the mechanism under test ran. */
+ * broken root only makes more true. The remaining five assert the *absence*
+ * of a side effect - `key validation`, `storage failure blocks new session`,
+ * `init failure path`, `init do_init failures`, `disabled write has no side
+ * effects` - and cannot tell "nothing happened" from "nothing could happen".
+ * They stay honest only because a broken root turns most of the suite red
+ * first. Do not read their PASS as evidence that the mechanism under test ran.
+ * CI pins the 51 with `fails -lt 51`; re-measure both numbers when cases are
+ * added. */
 static const char *g_fixture_error = NULL;
 
 static void pc_log_fn(log_level_t level, const char *tag, const char *fmt, ...) {
@@ -111,8 +113,22 @@ static int fake_storage_large(const char *path, uint64_t *available_bytes) {
     return 0;
 }
 
+/* Counts how many times the module actually asked for free space. The storage
+ * cache is only observable through this number: a cached answer and a fresh
+ * query return the same value, so a case that asserts state alone cannot tell
+ * them apart. */
+static atomic_int g_storage_query_calls = 0;
+
+static int fake_storage_counting(const char *path, uint64_t *available_bytes) {
+    (void)path;
+    atomic_fetch_add(&g_storage_query_calls, 1);
+    *available_bytes = 1024ULL * 1024ULL * 1024ULL;
+    return 0;
+}
+
 static int fake_storage_slow(const char *path, uint64_t *available_bytes) {
     (void)path;
+    atomic_fetch_add(&g_storage_query_calls, 1);
     usleep(50000);
     *available_bytes = 1024ULL * 1024ULL * 1024ULL;
     return 0;
@@ -542,6 +558,17 @@ static int file_size(const char *path, uint64_t *size_out) {
 
 static void touch_old_file(const char *path);
 
+/* Pointer identity is unreliable here: a closed FILE's allocation is reused by
+ * the next fopen, so eviction assertions compare slot paths instead. */
+static bool any_slot_tracks_path(const file_manager_t *mgr, const char *path) {
+    for (uint32_t i = 0; i < MAX_OPEN_FILES; ++i) {
+        if (mgr->files[i].in_use && strcmp(mgr->files[i].path, path) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
 static bool path_exists(const char *path) {
     struct stat st = {0};
     return path != NULL && stat(path, &st) == 0;
@@ -877,12 +904,37 @@ static void test_argument_guard_coverage(void) {
 static void test_storage_cache_interval_hits_cached_path(void) {
     const char *name = "storage cache interval hits cached path";
     dump_status_t status = {0};
+    char paths[4][512] = {{0}};
+    char content[32] = {0};
+    int files = 0;
+    int calls = 0;
 
     reset_test_dir();
+    /* A cold cache makes the first write query and the second one reuse the
+     * answer. Without forcing that, an inherited warm cache from a previous
+     * case would make the query count zero and the assertion meaningless. */
+    atomic_store(&g_ctx.last_storage_check, 0);
+    atomic_store(&g_storage_query_calls, 0);
+    dump_pcm_set_storage_query_fn_for_test(fake_storage_counting);
+
     dump_pcm_data_write("cache", 5, "interval", "path");
     dump_pcm_data_write("cache2", 6, "interval", "path");
     usleep(120000);
     stop_and_wait("interval", "path");
+    dump_pcm_set_storage_query_fn_for_test(NULL);
+
+    files = find_pcm_files(paths, 4);
+    if (files != 1 || read_file(paths[0], content, sizeof(content) - 1) != 11 ||
+        memcmp(content, "cachecache2", 11) != 0) {
+        fail(name, "both writes must land in one file despite the cache hit");
+        return;
+    }
+
+    calls = atomic_load(&g_storage_query_calls);
+    if (calls != 1) {
+        fail(name, "the second write inside the interval must not re-query storage");
+        return;
+    }
 
     if (dump_pcm_data_get_status(&status) != 0 || status.active_session_count != 0) {
         fail(name, "cached storage path did not preserve normal state");
@@ -914,12 +966,22 @@ static void test_storage_cache_hits_cached_under_lock(void) {
     pthread_t threads[2] = {0};
     concurrent_write_args_t args[2] = {{0}};
     dump_status_t status = {0};
+    char paths[4][512] = {{0}};
+    char content[8] = {0};
+    int calls = 0;
 
     reset_test_dir();
     dump_pcm_data_write("warm", 4, "cache_lock", "same");
     usleep(120000);
     stop_and_wait("cache_lock", "same");
-    usleep(1100000);
+    /* Drop the warm-up file so the assertion below can compare against an exact
+     * shard count; the storage cache lives in the module, not in the directory. */
+    reset_test_dir();
+    /* Cold cache without a 1.1 s sleep: the query below must be the only one,
+     * which is what proves the second thread was served from the cache while
+     * the first held the storage mutex. */
+    atomic_store(&g_ctx.last_storage_check, 0);
+    atomic_store(&g_storage_query_calls, 0);
     dump_pcm_set_storage_query_fn_for_test(fake_storage_slow);
     if (pthread_barrier_init(&barrier, NULL, 3) != 0) {
         dump_pcm_set_storage_query_fn_for_test(NULL);
@@ -951,6 +1013,17 @@ static void test_storage_cache_hits_cached_under_lock(void) {
     dump_pcm_set_storage_query_fn_for_test(NULL);
     usleep(120000);
     stop_and_wait("cache_lock", "same");
+
+    calls = atomic_load(&g_storage_query_calls);
+    if (calls != 1) {
+        fail(name, "two racing writers must share one storage query");
+        return;
+    }
+
+    if (find_pcm_files(paths, 4) != 1 || read_file(paths[0], content, sizeof(content) - 1) != 2) {
+        fail(name, "both concurrent payloads must land in one file");
+        return;
+    }
 
     if (dump_pcm_data_get_status(&status) != 0 || status.active_session_count != 0) {
         fail(name, "cached storage path under lock did not settle cleanly");
@@ -2378,14 +2451,27 @@ static void test_file_manager_idle_scan_skips_inactive_slots(void) {
         return;
     }
 
+    /* Backfill the idle stamp instead of sleeping: the scan compares against
+     * the stamp, so an epoch stamp is idle for any IDLE_TIMEOUT_SEC. The point
+     * of the case is that the scan skips the *inactive* slot and evicts the
+     * in-use idle one, which only an ownership assertion can see. */
+    mgr.files[0].last_write_time = 0;
     mgr.count = MAX_OPEN_FILES;
     mgr.files[1].in_use = false;
-    sleep(IDLE_TIMEOUT_SEC + 1);
 
     next = file_mgr_get_handle(&mgr, "idle", "b", 2, 0, path_b, sizeof(path_b), &is_new);
     if (next == NULL || mgr.count != MAX_OPEN_FILES) {
         file_mgr_destroy(&mgr);
         fail(name, "idle scan did not reuse slot cleanly");
+        return;
+    }
+
+    /* The evicted slot must be the in-use idle one (key a), not the inactive
+     * slot the scan is supposed to skip: closing the wrong slot leaves the
+     * old path tracked and count would still read MAX_OPEN_FILES. */
+    if (any_slot_tracks_path(&mgr, path_a)) {
+        file_mgr_destroy(&mgr);
+        fail(name, "idle scan closed the inactive slot instead of the idle one");
         return;
     }
 
@@ -2499,6 +2585,20 @@ static int run_isolated_stop_while_pending_blocks(void) {
 
     if (dump_pcm_data_get_status(&status) != 0 || status.active_session_count != 0) {
         return 4;
+    }
+
+    /* The accepted blocks must be on disk: a stop() that discards the pending
+     * queue drains the counters just as cleanly, and only the byte count can
+     * tell the two apart. The queue holds MAX_QUEUE_BLOCKS blocks while the
+     * writer is frozen, so exactly that many 7-byte blocks should survive. */
+    {
+        char paths[4][512] = {{0}};
+        uint64_t size = 0;
+
+        if (find_pcm_files(paths, 4) != 1 || file_size(paths[0], &size) != 0 ||
+            size != (uint64_t)MAX_QUEUE_BLOCKS * 7) {
+            return 5;
+        }
     }
 
     return 0;
@@ -2975,6 +3075,15 @@ static void test_file_manager_cleanup_and_evict(void) {
         return;
     }
 
+    /* Eviction must pick the stalest slot (a, opened first), not whichever
+     * slot the loop reaches first: the reverse ordering is invisible in
+     * mgr.count, which is all the old assertion looked at. */
+    if (any_slot_tracks_path(&mgr, path_a) || !any_slot_tracks_path(&mgr, path_b)) {
+        file_mgr_destroy(&mgr);
+        fail(name, "idle eviction did not pick the stalest slot");
+        return;
+    }
+
     file_mgr_close(&mgr, fp_b);
     file_mgr_close(&mgr, fp_c);
 
@@ -3091,7 +3200,13 @@ static void test_file_manager_init_creates_and_destroy_closes(void) {
     }
 
     file_mgr_destroy(&mgr);
-    rmdir(root_dir);
+    /* A leaked handle keeps the file undeletable on Windows, so a destroy that
+     * forgets to close shows up here instead of being ignored. */
+    if (remove(path_a) != 0 || remove(path_b) != 0) {
+        file_mgr_set_root_dir(tp_test_root());
+        fail(name, "destroy left a file handle open");
+        return;
+    }
     file_mgr_set_root_dir(tp_test_root());
     pass(name);
 }
@@ -3466,8 +3581,28 @@ static int run_isolated_init_wait_test(void) {
     }
     stop_and_wait("init_wait", "same");
 
+    if (!g_init_wait_probe_started) {
+        return 2;
+    }
+
     if (dump_pcm_data_get_status(&status) != 0 || status.active_session_count != 0) {
         return 1;
+    }
+
+    /* The wait must not lose the block that triggered the slow init. The probe
+     * thread appends its own payload, so only the prefix is fixed. */
+    {
+        char paths[4][512] = {{0}};
+        char content[16] = {0};
+        int got = 0;
+
+        if (find_pcm_files(paths, 4) != 1) {
+            return 3;
+        }
+        got = read_file(paths[0], content, sizeof(content) - 1);
+        if (got < 4 || memcmp(content, "main", 4) != 0) {
+            return 3;
+        }
     }
 
     return 0;
@@ -3661,6 +3796,272 @@ static void test_lock_order_production_path(void) {
     run_isolated_case(name, env, "production path produced an F->C edge");
 }
 
+/* plan 2.2.3: the real split threshold is 1 GB, which no fixture can cross.
+ * The injected limit drives the same close-and-reopen path through the public
+ * API. Every chunk is one repeated byte, so a lost or duplicated block shows
+ * up in the per-byte counts even though shard order is not asserted. */
+static void test_file_split_via_public_api(void) {
+    const char *name = "file split via public api";
+    static char chunk[2000];
+    char paths[8][512] = {{0}};
+    char content[16384] = {0};
+    int counts[6] = {0};
+    int files = 0;
+    int total = 0;
+    const int chunks = 6;
+
+    reset_test_dir();
+    dump_pcm_set_file_size_limit_for_test(4096);
+    for (int i = 0; i < chunks; ++i) {
+        memset(chunk, 'A' + i, sizeof(chunk));
+        dump_pcm_data_write(chunk, sizeof(chunk), "split", "public");
+    }
+    stop_and_wait("split", "public");
+    dump_pcm_set_file_size_limit_for_test(0);
+
+    files = find_pcm_files(paths, 8);
+    if (files < 2) {
+        fail(name, "the injected limit must force more than one shard");
+        return;
+    }
+
+    for (int i = 0; i < files; ++i) {
+        uint64_t size = 0;
+        int got = 0;
+
+        /* The writer decides before each block, so a shard may overshoot the
+         * limit by at most one block; anything past that means the limit was
+         * never applied. */
+        if (file_size(paths[i], &size) != 0 || size > 4096 + sizeof(chunk)) {
+            fail(name, "a shard ran past the injected limit");
+            return;
+        }
+        if ((size_t)total + size >= sizeof(content)) {
+            fail(name, "the shards overflow the readback buffer");
+            return;
+        }
+        got = read_file(paths[i], content + total, sizeof(content) - (size_t)total - 1);
+        if (got != (int)size) {
+            fail(name, "a shard could not be read back whole");
+            return;
+        }
+        total += got;
+    }
+
+    if (total != chunks * (int)sizeof(chunk)) {
+        fail(name, "the shards do not add up to the payload");
+        return;
+    }
+
+    for (int i = 0; i < total; ++i) {
+        int slot = content[i] - 'A';
+        if (slot < 0 || slot >= chunks) {
+            fail(name, "a shard holds a byte that was never written");
+            return;
+        }
+        counts[slot]++;
+    }
+    for (int i = 0; i < chunks; ++i) {
+        if (counts[i] != (int)sizeof(chunk)) {
+            fail(name, "a shard lost or duplicated bytes");
+            return;
+        }
+    }
+
+    pass(name);
+}
+
+/* plan 2.2.6: the idle timeout releases a handle, never a session. The scan only
+ * runs when the handle table is full, so the case needs two live sessions and a
+ * third write. The idle stamps are backfilled instead of slept on; this is the
+ * one sanctioned place where a case reaches into the module's state, because
+ * the scan has no injectable clock and a real sleep would prove only the PC
+ * value (1 s), never the production one (5 s). */
+static void test_idle_timeout_keeps_session_and_file(void) {
+    const char *name = "idle timeout keeps session and file";
+    dump_status_t status = {0};
+    int dropped_before = 0;
+    int dropped_after = 0;
+
+    reset_test_dir();
+    if (dump_pcm_data_get_status(&status) != 0) {
+        fail(name, "status unavailable before the case");
+        return;
+    }
+    dropped_before = status.dropped_blocks;
+
+    dump_pcm_data_write("aaaaa", 5, "idle_survive", "keep");
+    dump_pcm_data_write("bbbbb", 5, "idle_survive", "other");
+    usleep(300000);
+
+    for (uint32_t i = 0; i < MAX_OPEN_FILES; ++i) {
+        if (g_ctx.file_mgr.files[i].in_use) {
+            g_ctx.file_mgr.files[i].last_write_time = 0;
+        }
+    }
+    if (g_ctx.file_mgr.count != MAX_OPEN_FILES) {
+        fail(name, "both sessions must occupy a handle before the scan");
+        return;
+    }
+
+    dump_pcm_data_write("ccccc", 5, "idle_survive", "third");
+    usleep(300000);
+
+    if (dump_pcm_data_get_status(&status) != 0 || status.active_session_count != 3) {
+        fail(name, "the idle scan must release a handle, not a session");
+        return;
+    }
+    if (g_ctx.file_mgr.count != MAX_OPEN_FILES) {
+        fail(name, "the idle scan neither evicted nor reopened a slot");
+        return;
+    }
+    if (count_pcm_files() != 3) {
+        fail(name, "the third session must own a file of its own");
+        return;
+    }
+
+    /* The evicted session keeps its file: a later write reopens the same path
+     * instead of starting a new session or a new file. The table is full with
+     * B and C, neither idle, so make a slot available first. */
+    for (uint32_t i = 0; i < MAX_OPEN_FILES; ++i) {
+        if (g_ctx.file_mgr.files[i].in_use) {
+            g_ctx.file_mgr.files[i].last_write_time = 0;
+        }
+    }
+    dump_pcm_data_write("ddddd", 5, "idle_survive", "keep");
+    usleep(300000);
+
+    if (dump_pcm_data_get_status(&status) != 0 || status.active_session_count != 3) {
+        fail(name, "writing an evicted session must not open a new session");
+        return;
+    }
+    if (count_pcm_files() != 3) {
+        fail(name, "the reopened session must reuse its file");
+        return;
+    }
+
+    dropped_after = status.dropped_blocks;
+    if (dropped_after != dropped_before) {
+        fail(name, "a block was dropped while a handle was being reclaimed");
+        return;
+    }
+
+    pass(name);
+}
+
+typedef struct {
+    pthread_barrier_t *barrier;
+    char byte;
+} concurrent_payload_args_t;
+
+static void *concurrent_payload_write(void *arg) {
+    const concurrent_payload_args_t *args = (const concurrent_payload_args_t *)arg;
+    char block[64];
+
+    memset(block, args->byte, sizeof(block));
+    pthread_barrier_wait(args->barrier);
+    for (int i = 0; i < 4; ++i) {
+        dump_pcm_data_write(block, sizeof(block), "concurrent", "loss");
+    }
+    return NULL;
+}
+
+/* plan 2.1.6: two threads racing into write() must lose nothing and duplicate
+ * nothing. The writer is frozen first, so the assertion can separate "queued"
+ * from "landed": while frozen the queue must hold every accepted block and the
+ * disk must hold none. The payloads are distinct bytes, so a lost block, a
+ * duplicated block and an interleaved rewrite are all distinguishable. */
+static int run_isolated_concurrent_write(void) {
+    pthread_barrier_t barrier;
+    pthread_t threads[2] = {0};
+    concurrent_payload_args_t args[2] = {{0}};
+    dump_status_t status = {0};
+    char paths[4][512] = {{0}};
+    char content[1024] = {0};
+    int got = 0;
+    int count_a = 0;
+    int count_b = 0;
+
+    reset_test_dir();
+    atomic_store(&g_writer_hold_ready, 0);
+    atomic_store(&g_writer_hold_release, 0);
+    dump_pcm_set_pthread_create_fn_for_test(fake_pthread_create_hold_writer);
+
+    if (pthread_barrier_init(&barrier, NULL, 3) != 0) {
+        dump_pcm_set_pthread_create_fn_for_test(NULL);
+        return 1;
+    }
+
+    args[0].barrier = &barrier;
+    args[0].byte = 'A';
+    args[1].barrier = &barrier;
+    args[1].byte = 'B';
+
+    if (pthread_create(&threads[0], NULL, concurrent_payload_write, &args[0]) != 0 ||
+        pthread_create(&threads[1], NULL, concurrent_payload_write, &args[1]) != 0) {
+        pthread_barrier_destroy(&barrier);
+        dump_pcm_set_pthread_create_fn_for_test(NULL);
+        return 1;
+    }
+
+    pthread_barrier_wait(&barrier);
+    pthread_join(threads[0], NULL);
+    pthread_join(threads[1], NULL);
+    pthread_barrier_destroy(&barrier);
+
+    if (!wait_for_writer_hold_ready()) {
+        atomic_store(&g_writer_hold_release, 1);
+        dump_pcm_set_pthread_create_fn_for_test(NULL);
+        return 2;
+    }
+
+    if (dump_pcm_data_get_status(&status) != 0 ||
+        status.queue_pending_blocks != MAX_QUEUE_BLOCKS) {
+        atomic_store(&g_writer_hold_release, 1);
+        dump_pcm_set_pthread_create_fn_for_test(NULL);
+        return 3;
+    }
+    if (count_pcm_files() != 0) {
+        atomic_store(&g_writer_hold_release, 1);
+        dump_pcm_set_pthread_create_fn_for_test(NULL);
+        return 4;
+    }
+
+    atomic_store(&g_writer_hold_release, 1);
+    dump_pcm_set_pthread_create_fn_for_test(NULL);
+    usleep(200000);
+    stop_and_wait("concurrent", "loss");
+
+    if (find_pcm_files(paths, 4) != 1) {
+        return 5;
+    }
+
+    got = read_file(paths[0], content, sizeof(content) - 1);
+    if (got != 512) {
+        return 6;
+    }
+    for (int i = 0; i < got; ++i) {
+        if (content[i] == 'A') {
+            count_a++;
+        } else if (content[i] == 'B') {
+            count_b++;
+        }
+    }
+    if (count_a != 256 || count_b != 256) {
+        return 7;
+    }
+
+    return 0;
+}
+
+static void test_concurrent_write_no_loss(void) {
+    const char *name = "concurrent write no loss";
+    static const char *const env[] = {"AUDIO_DUMP_ENABLED=1",
+                                      "AUDIO_DUMP_RUN_CONCURRENT_WRITE_TEST=1", NULL};
+
+    run_isolated_case(name, env, "isolated concurrent write failed");
+}
+
 static const test_case_t g_cases[] = {
     {"test_string_key_write_and_escape", test_string_key_write_and_escape},
     {"test_key_validation", test_key_validation},
@@ -3732,10 +4133,13 @@ static const test_case_t g_cases[] = {
      test_retention_reapplies_within_one_process},
     {"test_lock_order_negative_control", test_lock_order_negative_control},
     {"test_lock_order_production_path", test_lock_order_production_path},
+    {"test_file_split_via_public_api", test_file_split_via_public_api},
+    {"test_idle_timeout_keeps_session_and_file", test_idle_timeout_keeps_session_and_file},
+    {"test_concurrent_write_no_loss", test_concurrent_write_no_loss},
 };
 
-_Static_assert(sizeof(g_cases) / sizeof(g_cases[0]) == 69,
-               "the suite must register exactly 69 cases");
+_Static_assert(sizeof(g_cases) / sizeof(g_cases[0]) == 72,
+               "the suite must register exactly 72 cases");
 
 int main(int argc, char **argv) {
     const char *base_dir = NULL;
@@ -3811,6 +4215,10 @@ int main(int argc, char **argv) {
 
     if (getenv("AUDIO_DUMP_RUN_INIT_WAIT_TEST") != NULL) {
         return run_isolated_init_wait_test();
+    }
+
+    if (getenv("AUDIO_DUMP_RUN_CONCURRENT_WRITE_TEST") != NULL) {
+        return run_isolated_concurrent_write();
     }
 
     if (getenv("AUDIO_DUMP_RUN_SESSION_CAP_TEST") != NULL) {
