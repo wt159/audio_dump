@@ -236,7 +236,7 @@ G-01 属于既有缺陷，与本方案无关，但不修它后续所有 PR 都�
 
 ### 6.1 每次改动必跑
 
-`make` → `make run` → `make coverage`（含四个契约脚本），全绿才可提交。
+`make` → `make run` → `make coverage`（`make run` / `make coverage` 都会先跑全部契约，清单见 `Makefile` 的 `check-contracts` 前置项），全绿才可提交。
 执行环境为 Linux 或 CI。Windows 本机现在也能跑完整套件（`sh test/run_full_windows.sh`，用例范围见 `docs/test-matrix.md`），不再只是交叉编译验证——这一条与本文档记录的生产代码跨平台是两件事，见 `docs/windows-full-suite.md`。
 
 ### 6.2 新增用例
