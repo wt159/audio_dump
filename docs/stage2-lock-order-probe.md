@@ -55,7 +55,7 @@
 ## 6. 边界与复现
 
 - 探针是**辅助判据**：依赖 OS 调度，阈值留有余量但不作为 CI 必需检查；CI 只验证其静态契约。若未来在慢速 runner 上出现偶发 `caller max` 越界，应复核 OS 抖动，不得据此推翻 §13.1 的确定性结论。
-- 探针每次运行以 `build/blocking_probe_io/run_<pid>` 建新目录，不清理旧产物（避开批量删除保护）。
+- 每次运行在 `build/blocking_probe_io/run_<pid>` 建独立临时树（2000 blocks × 四组 × 两面会产生数百个 `.pcm` / `.json`）。运行器跑完会删除**本次刚建的那一个**目录：路径取自探针自己打印的 `[config] root=`，并按 `build/blocking_probe_io/run_*` 前缀复核后才删，从不使用通配符。**失败的运行一律保留**（留待取证），`PROBE_KEEP=1` 可强制保留；`PROBE_LOG=<path>` 可改结构化输出的落点。
 - 复现：
   ```sh
   cd dump_pcm_data
