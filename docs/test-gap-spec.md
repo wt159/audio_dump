@@ -106,8 +106,9 @@
 
 `test/coverage_baseline.txt` 存「文件 → 千分比」，**不存 `.gcov` 正文**（正文含 `Runs/Graph/Data`，每次运行都变）。
 
+- 输入是 `make coverage` 存下的 gcov **stdout**（`build/coverage/prod/gcov-summary.txt`），不是 `.gcov` 正文：`File '<path>'` + `Lines executed:` 摘要块只有 gcc 7 会写进正文，gcc 8 起只打到 stdout。按正文解析的脚本在 CI（gcc 15）上一行都取不到，在本地（gcc 7.3）却「通过」——这正是第一版棘轮的故障。
 - 提取：单遍 `awk`，用「上一行是 `File '<path>'`」做守卫——`gcov -f` 同时输出每函数同名格式行，无守卫会多抓 8 倍。
-- 只对 8 个 `.c` 定基线，排除头文件（`key_utils.h` 的分母随请求的 TU 集合在 8 / 36 之间变）。
+- 只对 8 个 `.c` 定基线，排除头文件（`key_utils.h` 的分母随请求的 TU 集合在 114 / 36 之间变）；解析到的文件数不等于 8 即红，并点名缺哪个。
 - 容差：单文件下降超过 0.5 个百分点即红；合计下降超过 0.5 即红。零容差不成立——分母随 `-O` 级别与 gcc 版本漂（同一文件 `-O0` 为 `82.14% of 84`，`-O2` 为 `86.49% of 74`），多线程套件的命中行集合本身不确定。
 - 基线绑定 CI 镜像与 gcc 版本：换镜像或换编译器视为**重基线事件**，不是回归。
 - 逃生阀：`COVERAGE_RATCHET=0` 跳过硬门禁（仅本地）。
@@ -125,7 +126,7 @@
 2. 矩阵中不再有「弱」或「恒真」级别——两者都已加固或被明确标注为「确认不测」并附理由。
 3. §4 的三组用例与 §5 的契约 TU 已入库，并各自附过一次负控。
 4. 四个必需检查全绿：`PC build, test and coverage`、`MinGW cross compile check`、`Sanitizers (ASan + UBSan)`、`Windows native full suite`。
-5. 覆盖率棘轮在 PC job 上生效（首次以 bootstrap 写入基线的那一次绿不算生效）。
+5. 覆盖率棘轮在 PC job 上生效：基线已入库（数字取自 gcc 15 的一次产出），因此第一次绿跑就是真实比较，不是 bootstrap。
 
 ## 8. 实施切片
 

@@ -38,9 +38,11 @@ jobs:
         run: make coverage
 
       # Per-file line coverage may not fall below the committed baseline by more
-      # than the tolerance. Bootstrapping: with no baseline committed the script
-      # prints the current numbers and exits 0, so the first green run on a new
-      # image is how the baseline gets written.
+      # than the tolerance. The baseline in test/coverage_baseline.txt was taken
+      # from this image's gcc 15 output, so this is a live gate: red means either
+      # a real coverage drop or a re-baseline event (new image or compiler), and
+      # the message names the file and both numbers so the two are easy to tell
+      # apart.
       - name: coverage ratchet
         working-directory: dump_pcm_data
         run: make coverage-ratchet
