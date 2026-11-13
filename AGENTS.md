@@ -28,6 +28,10 @@
 ## Workflow
 - Every change, documentation included, lands through a pull request. Do not commit to `main` directly.
 - Keep PRs single-purpose: one behaviour change per PR, with the tests that cover it in the same commit series.
+- When a hardening pass exposes a production defect, split it in two: the fix lands first, in its own PR, carrying the case that fails without it; the rest of the hardening follows behind. A case written against today's buggy behaviour either goes green vacuously or gets dropped, so it must not reach `main` ahead of the fix — that would trade a red suite for a lost observation.
+- File the defect as its own issue before fixing it, with the mechanism, the seam that observes it without sleeping, the observed-vs-expected evidence at line level, and one sentence naming the assertion that goes red when the mechanism breaks. "It looks wrong" is not a reproduction.
+- Decide which side is defective by the documented contract, not by who wrote the code: write the assertion the spec implies, run it against unchanged `src/`, and read the result. Passes → the gap was in the test (this is what the 2.2.6 idle-timeout item turned out to be: session survival had never been asserted). Fails → the module is wrong and that assertion is the bug report.
+- Never soften a gate to land a change: no widening `continue-on-error`, no lowering the negative-control floor to match a passing run, no `COVERAGE_REBASELINE=1` on a same-denominator drop, no deleting a case because it is inconvenient. If a gate is genuinely wrong, fix the gate in its own PR and carry the evidence that the old threshold was mis-calibrated.
 
 ## Build and test
 - PC build: `cd dump_pcm_data && make`
