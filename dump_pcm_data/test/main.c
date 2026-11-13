@@ -3582,25 +3582,57 @@ static int run_isolated_init_wait_test(void) {
     stop_and_wait("init_wait", "same");
 
     if (!g_init_wait_probe_started) {
+        fprintf(stderr, "init_wait: the writer thread was never created through the hook\n");
         return 2;
     }
 
-    if (dump_pcm_data_get_status(&status) != 0 || status.active_session_count != 0) {
-        return 1;
+    /* stop_and_wait's fixed 120 ms is a courtesy to the writer thread, not a
+     * guarantee. Under ASan and at -O2 on a loaded runner the teardown can
+     * still be in flight here, so poll for the condition this case is actually
+     * asserting instead of waiting a fixed time for it. */
+    {
+        int rc = -1;
+        bool drained = false;
+
+        for (int i = 0; i < 2000; ++i) {
+            rc = dump_pcm_data_get_status(&status);
+            if (rc == 0 && status.active_session_count == 0) {
+                drained = true;
+                break;
+            }
+            usleep(1000);
+        }
+        if (!drained) {
+            fprintf(stderr, "init_wait: not drained after 2 s (rc=%d, sessions=%u)\n",
+                    rc, status.active_session_count);
+            return 1;
+        }
     }
 
     /* The wait must not lose the block that triggered the slow init. The probe
-     * thread appends its own payload, so only the prefix is fixed. */
+     * thread is spawned by the create-hook, so it races the triggering write for
+     * the queue slot and nothing in the module orders the two: the file holds
+     * both payloads, in whichever order they landed. Asserting a fixed order
+     * here is what made this case fail under ASan and at -O2 while passing at
+     * -O0: the assertion was on the scheduler, not on the module. */
     {
         char paths[4][512] = {{0}};
-        char content[16] = {0};
+        char content[32] = {0};
+        int files = 0;
         int got = 0;
 
-        if (find_pcm_files(paths, 4) != 1) {
+        files = find_pcm_files(paths, 4);
+        if (files != 1) {
+            fprintf(stderr, "init_wait: expected one file, found %d\n", files);
             return 3;
         }
         got = read_file(paths[0], content, sizeof(content) - 1);
-        if (got < 4 || memcmp(content, "main", 4) != 0) {
+        if (got != 9) {
+            fprintf(stderr, "init_wait: expected 9 bytes, got %d\n", got);
+            return 3;
+        }
+        if (strstr(content, "main") == NULL || strstr(content, "probe") == NULL) {
+            fprintf(stderr, "init_wait: payloads missing, got '%s'\n", content);
             return 3;
         }
     }

@@ -75,7 +75,7 @@
 | `test_disabled_write_has_no_side_effects` | — | 可失败 | — | 总开关关闭无副作用 |
 | `test_cleanup_deferred_to_writer_thread` | — | 可失败 | — | 清理不在调用线程 |
 | `test_runtime_controls` | — | 可失败 | — | 开关 / 根目录 |
-| `test_init_wait_path` | — | 可失败 | 断言缺口（已加固） | 断言等待期数据不丢 |
+| `test_init_wait_path` | — | 可失败 | 断言缺口（已加固） | 断言等待期数据不丢；两个 block 的落盘顺序不参与断言（探针线程与触发写入竞争队列，顺序由调度器决定） |
 | `test_whitebox_coverage_shim` | — | 可失败 | 断言缺口（已加固） | 断言守卫后状态可查 |
 | `test_retention_reapplies_within_one_process` | — | 可失败 | — | 同进程内再次清理 |
 | `test_lock_order_negative_control` | — | 可失败 | — | 反例必须被探针抓到 |
