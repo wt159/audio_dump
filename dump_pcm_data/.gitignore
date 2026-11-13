@@ -4,3 +4,4 @@ dump_pcm_test
 *.gcda
 *.gcno
 *.gcov
+test/coverage_baseline.txt.pre-rebaseline
