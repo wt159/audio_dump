@@ -48,8 +48,9 @@ plan 项到用例的映射、断言级别与「确认不测」的理由，**唯�
 1. `make`
 2. `make run`
 3. `make coverage`
+4. `make coverage-ratchet`
 
-`make coverage` 目前只打印 gcov 摘要、恒以 0 退出；覆盖率棘轮的门禁形态见 `docs/test-gap-spec.md` §6.2。
+`make coverage` 只打印 gcov 摘要、恒以 0 退出；棘轮是**独立的第四步**（`dump_pcm_data/test/check_coverage_ratchet.sh`，基线 `test/coverage_baseline.txt`，容差 0.5 pp，判据见 `docs/test-gap-spec.md` §6.2），CI 把这两步排在同一个 PC job 里。`make run` / `make coverage` 之前还会先跑 `make check-contracts`。
 
 ---
 
