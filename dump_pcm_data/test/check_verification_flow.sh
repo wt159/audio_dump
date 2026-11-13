@@ -5,6 +5,18 @@ grep -q '^check-contracts: check-verification-flow check-header-contract check-d
 grep -q '^run: check-contracts $(TARGET)$' Makefile
 grep -q '^coverage: check-contracts all$' Makefile
 
+# The two compilation contracts must run with the compiler the build used, not
+# whatever `cc` happens to be first on PATH: `make CC=<cross compiler>` would
+# otherwise build the module with one compiler and check the headers and the
+# production limits with another. Pinned here because the pass-through is one
+# word in the Makefile and drifts back silently. check_shared_library_exports.sh
+# is deliberately excluded - it inspects ELF symbols and must stay on host cc.
+grep -q '^check-header-contract:$' Makefile
+grep -q 'CC="\$(CC)" sh test/check_verification_flow.sh' Makefile
+grep -q 'CC="\$(CC)" sh test/check_header_contract.sh' Makefile
+grep -q 'CC_BIN=${CC:-cc}' test/check_config_limits.sh
+grep -q 'CC_BIN=${CC:-cc}' test/check_header_contract.sh
+
 # Stage-2 lock-order invariants are checked as part of the same contract pass,
 # so every make run / make coverage (and the CI PC job) enforces them.
 SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
