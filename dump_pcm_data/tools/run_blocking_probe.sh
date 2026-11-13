@@ -5,6 +5,10 @@
 # own wrap list and the production (default) platform config. The PC config caps
 # the queue at 8 blocks, which would turn a 20 ms writer stall into throughput
 # drops unrelated to lock contention.
+#
+# Env: PROBE_LOG=<path>    where the structured output goes (default under build/)
+#      PROBE_KEEP=1        keep the run's build/blocking_probe_io/run_<pid> tree
+#                          (a failing run keeps it regardless, for inspection)
 set -eu
 
 MODULE_DIR=$(cd "$(dirname "$0")/.." && pwd)
@@ -59,5 +63,27 @@ else
     rc=$?
 fi
 cat "$LOG"
+
+# One scratch tree per run: build/blocking_probe_io/run_<pid>. Remove exactly the
+# directory this run announced, and only when it passed -- a failing run keeps its
+# .pcm/.json files for inspection. PROBE_KEEP=1 keeps them either way. The path is
+# parsed from the probe's own [config] line and re-matched against the expected
+# prefix, so this never becomes a wildcard delete.
+SCRATCH=$(sed -n 's/.*root=\(build\/blocking_probe_io\/run_[0-9][0-9]*\).*/\1/p' "$LOG" | head -n 1)
+if [ -n "$SCRATCH" ]; then
+    if [ "$rc" -eq 0 ] && [ -z "${PROBE_KEEP:-}" ]; then
+        case "$SCRATCH" in
+            build/blocking_probe_io/run_*)
+                if rm -rf -- "$SCRATCH"; then
+                    printf 'scratch: removed %s (set PROBE_KEEP=1 to keep it)\n' "$SCRATCH"
+                else
+                    printf 'scratch: could not remove %s\n' "$SCRATCH"
+                fi
+                ;;
+        esac
+    else
+        printf 'scratch: kept %s (failed run or PROBE_KEEP set)\n' "$SCRATCH"
+    fi
+fi
 printf 'log: %s\n' "$LOG"
 exit "$rc"

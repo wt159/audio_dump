@@ -44,5 +44,11 @@ check '--wrap=pthread_mutex_unlock' "$RUNNER"
 # Only logger.c may be built in desktop mode: every other production TU keeps
 # the default 800-block queue, otherwise the probe measures PC queue drops.
 check '-DDUMP_PCM_PC -c src/logger.c' "$RUNNER"
+# Scratch-tree hygiene: each run leaks ~170 files unless the runner removes the
+# tree it just created. It must parse the announced path, re-match the expected
+# prefix (never a wildcard), and keep the tree when the run failed.
+check 'PROBE_KEEP' "$RUNNER"
+check 'build/blocking_probe_io/run_*)' "$RUNNER"
+check 'rm -rf -- "$SCRATCH"' "$RUNNER"
 
 printf 'blocking probe contract: PASS\n'
