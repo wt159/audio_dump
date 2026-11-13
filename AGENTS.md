@@ -1,7 +1,7 @@
 # AGENTS.md
 
 ## Repo shape
-- Work happens in `dump_pcm_data/`; the repo root only holds docs (`spec.md`, `design.md`, `plan.md`) and one module directory.
+- Work happens in `dump_pcm_data/`; the repo root holds `README.md`, `AGENTS.md`, `docs/` (spec / design / plan and the stage-2 record) and the module directory.
 - The codebase is a single C11 audio HAL PCM dump module with PC test support and Android static-library integration.
 
 ## Source of truth
