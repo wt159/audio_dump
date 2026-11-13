@@ -41,7 +41,7 @@ $(WHITEBOX_OBJ_DIR)/%.o: test/%.c
 	$(CC) $(CFLAGS) -c -o $@ $<
 
 clean:
-	rm -rf $(BUILD_DIR) $(TARGET) *.gcno *.gcda *.gcov src/*.o src/*.gcno src/*.gcda src/*.gcov src/*.gcov test/*.o test/*.gcno test/*.gcda test/*.gcov
+	rm -rf $(BUILD_DIR) $(TARGET) $(TARGET).exe *.gcno *.gcda *.gcov src/*.o src/*.gcno src/*.gcda src/*.gcov src/*.gcov test/*.o test/*.gcno test/*.gcda test/*.gcov
 
 coverage-ratchet:
 	@sh test/check_coverage_ratchet.sh

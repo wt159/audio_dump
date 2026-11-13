@@ -1,5 +1,6 @@
 build/
 dump_pcm_test
+dump_pcm_test.exe
 *.o
 *.gcda
 *.gcno
