@@ -38,25 +38,24 @@ dump_pcm_data/
 ├── src/
 │   ├── dump_pcm_data.c   # API facade + init/shutdown 编排
 │   ├── dump_control.c    # enable/storage/query 控制逻辑
-│   ├── dump_writer.c     # 后台写线程 + 写端生命周期
-│   ├── logger.c          # 日志实现
-│   ├── queue.c           # 队列实现
+│   ├── dump_writer.c     # 后台写线程：决策 / 执行 / 发布三段式
+│   ├── file_mgr.c        # 文件槽位表、capture/run job、清理
+│   ├── file_mgr_job.h    # POD job 与会话快照（仅内部）
+│   ├── sidecar.c         # 元数据 JSON 序列化与原子写
 │   ├── session.c         # 会话管理
-│   ├── file_mgr.c        # 文件管理
+│   ├── queue.c           # 队列实现
+│   ├── logger.c          # 日志实现
 │   ├── dump_internal.h   # 共享内部状态和不变量
-│   ├── logger.h          # 内部日志头
-│   ├── queue.h           # 内部队列头
-│   ├── session.h         # 内部会话头
-│   ├── file_mgr.h        # 内部文件管理头
+│   ├── dump_test_hooks.h # 仅测试使用的注入点（不安装）
+│   ├── logger.h / queue.h / session.h / file_mgr.h / sidecar.h  # 内部头
 │   ├── key_utils.h       # 键值工具
-│   ├── platform_config.h # 平台配置头
-│   ├── platform_config_default.h
-│   └── platform_config_pc.h
-└── test/
-    ├── main.c            # PC 测试程序
-    ├── whitebox.c        # 白盒覆盖测试
-    └── check_header_contract.sh  # 头文件可见性合约检查
+│   └── platform_config.h / platform_config_default.h / platform_config_pc.h
+└── test/ + tools/        # PC 测试、契约脚本与 §13.2 阻塞放大探针；
+                          # 完整清单见 dump_pcm_data/README.md 的「项目结构」
 ```
+
+源码树只在这里列到「模块职责」粒度：逐文件清单与新增文件由
+[`dump_pcm_data/README.md`](../dump_pcm_data/README.md) 维护，避免两处各写一份、其中一份先腐烂。
 
 ---
 
@@ -94,13 +93,20 @@ typedef struct {
 
 ```c
 typedef struct {
-    pthread_mutex_t mutex;         // 主锁
-    pthread_cond_t cond;           // 条件变量
-    pthread_t writer_thread;       // 后台写线程
-    queue_t *queue;                // 数据块队列
-    session_info_t *sessions[16];  // 会话表，最多16条
-    uint8_t initialized;           // 初始化标志
-    uint8_t low_storage_triggered; // 低存储触发标志
+    pthread_mutex_t mutex;      /* 主锁 C：队列 / 会话表 / pending_blocks 记账 */
+    pthread_cond_t cond;        /* 写线程等待新 block */
+    clockid_t cond_clock_id;    /* cond 创建时用的时钟；timedwait 必须用它算 deadline */
+    pthread_t writer_thread;
+    queue_t queue;              /* 值类型，不是指针 */
+    session_manager_t sessions;
+    file_manager_t file_mgr;    /* 持有自己的锁 F，与 C 分开 */
+    int initialized;
+    int writer_running;
+    atomic_int low_storage_triggered;
+    atomic_uint_fast64_t last_storage_check;
+    atomic_uint_fast64_t storage_cache_mb;
+    atomic_int enabled;
+    uint32_t next_generation;
 } dump_context_t;
 ```
 
@@ -217,17 +223,18 @@ typedef struct {
 
 **设计思路**：
 
-- 文件路径：`/data/vendor/audio_dump/pcm/<escaped-key1>_<escaped-key2>_<stable-hash>_<generation>_<split-index>_<timestamp>.pcm`
+- 根目录：Android 默认 `/data/vendor/audio/`，PC 测试默认 `/tmp/audio_dump_test/`；宿主可在初始化前用 `dump_pcm_set_root_dir()` 改
+- 文件路径：`<root>/<escaped-key1>_<escaped-key2>_<stable-hash>_<generation>_<split-index>_<timestamp>.pcm`
 - key2 转义：非 `[a-zA-Z0-9_-]` 字符替换为 `_`
 - 分片策略：单文件 1GB 超过后，只在同一 session 内新建文件，generation 不变，split-index 加 1
 - LRU 策略：最多 16 个打开的句柄，句柄空闲 5 秒后关闭最久未使用的文件；这只管句柄，不触发 session rollover
 
-**关键操作**：
+**关键操作**（生产路径走 capture / run 两族，见 [`stage2-lock-order-spec.md`](stage2-lock-order-spec.md) §5）：
 
-- `file_mgr_get_handle()` - 获取文件句柄（LRU 淘汰）
-- `file_mgr_write()` - 写入数据
-- `file_mgr_close()` - 关闭文件
-- `file_mgr_cleanup()` - 清理旧文件（init 时调用）
+- `file_mgr_capture_open()` / `_write()` / `_close()` / `_initial_meta()` / `_cleanup()` - 持 F 的纯内存阶段，只产出自包含 POD job，返回前必定释放 F
+- `file_mgr_run_job()` / `file_mgr_run_jobs()` - 不持任何模块锁执行 `fopen` / `fwrite` / `fflush` / `fclose` / sidecar 与目录清理
+- `file_mgr_get_handle()` / `_write()` / `_close()` / `_attach_meta()` / `_is_tracking()` - 旧签名薄兼容层，**仅供单线程测试夹具**，生产路径禁止调用
+- `file_mgr_cleanup()` - 清理旧文件；首次由写线程执行，此后每完成 8 个会话再跑一次
 
 ### 5.4 日志模块（logger.c）
 
@@ -280,13 +287,16 @@ void log_message(log_level_t level, const char *fmt, ...);
 ### 6.3 后台写线程流程
 
 ```
-1. 等待条件变量
-2. 从队列获取数据块
-3. 获取对应会话的文件句柄
-4. 写入文件
-5. 更新会话状态（文件大小、句柄使用时间）
-6. 循环直到队列为空
+1. 决策段（持 C）：等条件变量 → 取 block → 按身份键找会话 → 做 POD 快照（含 fp 值，仅作身份标签）→ 解锁 C
+2. 执行段（不持锁）：capture 出 job（capture 内部短持 F 做槽位查表，返回前释放）→ run 执行
+   fopen / fwrite / fflush / fclose / sidecar，全部阻塞 I/O 只发生在这里
+3. 发布段（重持 C）：按身份键与 fp 值复核会话 → 发布新句柄 / 文件大小 → pending_blocks--
+   → 若会话处于 STOPPING 且已归零则销毁（只摘句柄）→ 解锁 C
+4. 锁外收尾：关闭上一步摘下的句柄并写 final sidecar，必要时执行保留期清理
+5. 循环，直到 queue 空且 writer_running 归零
 ```
+
+次序被两条不变量钉住：**F 的最后一次 unlock 严格早于发布段第一次 lock(C)**（L2），以及**任何阻塞 I/O 都不得在持 C 或持 F 的区间内执行**（L4）。细节与静态判据见 [`stage2-lock-order-spec.md`](stage2-lock-order-spec.md)。
 
 ---
 
@@ -362,37 +372,31 @@ void log_message(log_level_t level, const char *fmt, ...);
 
 ### 10.3 Makefile 编译
 
-```makefile
-# PC 测试编译
-CC = gcc
-CFLAGS = -Wall -Wextra -std=c11 -g
-ifeq ($(TARGET),android)
-    CFLAGS += -DANDROID
-    SRC = dump_pcm_data.c queue.c session.c file_mgr.c logger.c
-else
-    # PC 测试
-    SRC = dump_pcm_data.c queue.c session.c file_mgr.c logger.c test_main.c
-endif
-
-TARGET = dump_pcm_test
-```
+构建清单以文件为准，不在文档里复写：PC 侧见 [`dump_pcm_data/Makefile`](../dump_pcm_data/Makefile) 与 [`CMakeLists.txt`](../dump_pcm_data/CMakeLists.txt)，Android 侧见 [`Android.mk`](../dump_pcm_data/Android.mk)（`LOCAL_SRC_FILES` 为 `src/` 下的 8 个 TU：`logger.c`、`queue.c`、`session.c`、`file_mgr.c`、`dump_control.c`、`dump_writer.c`、`sidecar.c`、`dump_pcm_data.c`）。两处清单与 `ls src/*.c` 一致；阶段二的改动只新增了头文件，未新增编译单元。
 
 ---
 
 ## 11. 线程安全设计
 
-| 共享资源 | 保护方式 |
-|----------|----------|
-| 队列 | pthread_mutex_t |
-| 会话表 | pthread_mutex_t |
-| 文件句柄表 | 与会话表共用一把锁 |
-| 全局状态 | pthread_mutex_t |
+| 锁 | 变量 | 保护的资源 |
+|----|------|------------|
+| C | `g_ctx.mutex` | 队列、会话表、`pending_blocks` 记账、`writer_running` |
+| F | `g_file_mgr_mutex` | 文件槽位表（`file_info_t` 数组）与保留期清理的槽位摘除 |
+| S | `g_storage_mutex` | 存储探测本身：1 秒缓存判定 + 同步的 `statvfs` / `GetDiskFreeSpaceExA` 查询。探测是阻塞调用，因此**不能**放在 C 里，这就是它单独成锁的原因 |
+| I | `g_init_mutex` + `g_init_cond` | 惰性单例的初始化状态机 |
+
+**锁序规则**：
+
+- **F 是叶子锁**（L1）：持 F 的路径不得再取 C / S / I，也不得调用可能取它们的函数；每个 `file_mgr_capture_*` 入口（含全部提前返回分支）必须在返回前释放 F。持 C 时取 F 不被禁止，但热路径上不这么做。
+- **I/O 不占锁**（L4）：`fopen` / `fwrite` / `fflush` / `fclose` / sidecar 的 open-write-rename / `opendir`-`stat`-`remove` 一律在锁外执行。因此写线程落盘期间，HAL 线程不会因为等在 C 上而阻塞。
+- **句柄关闭准入**（L5）：`fclose` 只能由「持 C 且观察到 `pending_blocks == 0`」或「对该 `FILE *` 独占所有权的线程」发起。
 
 **注意**：
 - 后台写线程是唯一的消费者
-- 多个 HAL 线程是生产者，使用同一把锁
+- 多个 HAL 线程是生产者，使用同一把 C
 - `dump_pcm_data_write()` 进入时间由 HAL 线程捕获，2 秒会话滚转判断不依赖后台落盘时间
-- stop 操作先阻止同 key 新数据进入，再刷新队列并关闭文件
+- stop 操作先阻止同 key 新数据进入，再刷新队列并关闭文件；`fclose` 与 final sidecar 由调用线程在解锁后执行（不占锁，但确实在该线程上）
+- 上述三条不变量的完整定义、可达性论证与静态/动态判据见 [`stage2-lock-order-spec.md`](stage2-lock-order-spec.md)、[`stage2-lock-order-evidence.md`](stage2-lock-order-evidence.md) 与 [ADR 0002](adr/0002-stage2-lock-order-decisions.md)
 
 ---
 
@@ -400,7 +404,7 @@ TARGET = dump_pcm_test
 
 | 指标 | 目标 |
 |------|------|
-| write() 延迟 | < 1ms（不含锁竞争） |
+| write() 延迟 | < 1ms（不含锁竞争）；实测 p50 ≈ 17 µs、p99 ≈ 30 µs（4000 次调用，Windows / SSD 热缓存），20 ms 落盘停顿注入下调用线程仍 < 300 µs |
 | 队列处理延迟 | < 100ms |
 | 内存占用 | < 20MB |
 | 文件句柄 | < 16 个 |
