@@ -47,10 +47,10 @@ coverage-ratchet:
 	@sh test/check_coverage_ratchet.sh
 
 check-verification-flow:
-	@sh test/check_verification_flow.sh
+	@CC="$(CC)" sh test/check_verification_flow.sh
 
 check-header-contract:
-	@sh test/check_header_contract.sh
+	@CC="$(CC)" sh test/check_header_contract.sh
 
 check-docs-build-contract:
 	@sh test/check_docs_build_contract.sh
