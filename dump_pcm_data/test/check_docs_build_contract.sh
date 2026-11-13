@@ -18,5 +18,6 @@ grep -q 'docs/test-gap-spec.md' ../AGENTS.md
 grep -q 'make coverage-ratchet' ../AGENTS.md
 grep -q 'test/coverage_baseline.txt' ../AGENTS.md
 grep -q 'check_doc_case_counts.sh' ../AGENTS.md
+grep -q 'check_contract_inventory.sh' ../AGENTS.md
 grep -q 'docs/test-matrix.md' README.md
 grep -q 'docs/test-matrix.md' ../README.md

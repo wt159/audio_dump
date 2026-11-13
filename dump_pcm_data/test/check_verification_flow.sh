@@ -17,9 +17,14 @@ grep -q 'CC="\$(CC)" sh test/check_header_contract.sh' Makefile
 grep -q 'CC_BIN=${CC:-cc}' test/check_config_limits.sh
 grep -q 'CC_BIN=${CC:-cc}' test/check_header_contract.sh
 
+SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
+
+# Structural, so it runs before the rest: a check script nobody executes is a
+# gate that never runs, however green it would have been.
+sh "$SCRIPT_DIR/check_contract_inventory.sh"
+
 # Stage-2 lock-order invariants are checked as part of the same contract pass,
 # so every make run / make coverage (and the CI PC job) enforces them.
-SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 sh "$SCRIPT_DIR/check_lock_order.sh"
 
 # The section 13.2 blocking-amplification probe is a standalone timing-based

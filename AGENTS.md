@@ -12,7 +12,7 @@
 ## 强制验证规则
 - 每次改动代码后，必须按顺序执行：编译 → 测试 → 覆盖率 → 棘轮。
 - 对这个仓库，PC 端验证顺序就是 `make` → `make run` → `make coverage` → `make coverage-ratchet`。
-- `make run` / `make coverage` 会先跑 `make check-contracts`（矩阵、生产限值、锁序、探针、文档、共享库导出），契约红就不进入测试。
+- `make run` / `make coverage` 会先跑 `make check-contracts`，契约红就不进入测试。契约清单不在这里复述：`Makefile` 里 `check-contracts` 的前置项就是清单，而 `test/check_contract_inventory.sh` 保证每一个 `test/check_*.sh` 要么被它执行，要么在脚本里带理由登记为「另一个目标负责」——没人调用的契约脚本和无法失败的契约一样，都是不存在的门。
 
 ## Environment and CI constraints
 - This workstation has no `gcc`/`make` on PATH and `wsl.exe` is blocked, but Qt 5.14.2 ships a MinGW-w64 7.3 toolchain at `D:/Qt/Tools/mingw730_64/bin`. It runs both the Windows smoke (`sh test/run_windows_smoke.sh`) and the complete suite (`sh test/run_full_windows.sh`); the harness no longer uses `fork`/`exec`, so nothing forces the suite onto Linux. `make` builds here once the MinGW bin directory is on PATH (contract scripts now compile with the Makefile's `$(CC)`, not with a bare `cc`), but `make run` / `make coverage` stop at `check-shared-library-exports`: that probe inspects ELF dynamic symbols and is host-bound by design, so the four-step sequence needs CI or a Linux host. For the suite alone on Windows, run `sh test/run_full_windows.sh`.
