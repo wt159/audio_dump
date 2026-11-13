@@ -7,7 +7,7 @@
 ## Source of truth
 - Prefer executable config over prose. `dump_pcm_data/Makefile` and `dump_pcm_data/Android.mk` are authoritative.
 - The root docs are useful context, but they are not always current. Verify behavior in code before updating docs.
-- Test inventory: `docs/test-matrix.md` is the single source of truth for what the suite covers (case → plan item → assertion level → gap type → note), and `test/check_test_matrix.sh` fails when it disagrees with the case table in either direction. The criteria and acceptance conditions behind it are `docs/test-gap-spec.md`. `docs/plan.md` §2 is a pointer to both, not a list.
+- Test inventory: `docs/test-matrix.md` is the single source of truth for what the suite covers (case → plan item → assertion level → gap type → note), and `test/check_test_matrix.sh` fails when it disagrees with the case table in either direction. The criteria and acceptance conditions behind it are `docs/test-gap-spec.md`. `docs/plan.md` §2 is a pointer to both, not a list. The case count is part of that: `test/check_doc_case_counts.sh` derives it from the table and fails when any other document states a different one, so do not restate the count in prose — point at the matrix. Documents that record a past state are named in that script with their reason and are exempt from the comparison but not from being counted, so an exemption that no longer covers anything also fails.
 
 ## 强制验证规则
 - 每次改动代码后，必须按顺序执行：编译 → 测试 → 覆盖率 → 棘轮。

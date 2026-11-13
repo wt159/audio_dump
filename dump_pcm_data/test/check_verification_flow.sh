@@ -32,6 +32,11 @@ sh "$SCRIPT_DIR/check_blocking_probe.sh"
 sh "$SCRIPT_DIR/check_test_matrix.sh"
 sh "$SCRIPT_DIR/check_config_limits.sh"
 
+# The matrix is only the source of truth if nothing else states a different
+# count. Prose is not rebuilt with the code, so the number it carries is checked
+# against the table here rather than trusted.
+sh "$SCRIPT_DIR/check_doc_case_counts.sh"
+
 # The ratchet classifies a drop as a regression or as a change of shape, and
 # neither situation can be produced by the real suite (the first would mean
 # deleting coverage, the second needs a different compiler). The fixture
