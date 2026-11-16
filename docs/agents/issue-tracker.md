@@ -47,6 +47,6 @@ Used by `/wayfinder`. The **map** is a single issue with **child** issues as tic
 ## Repo specifics
 
 - `wt159/audio_dump` is a C11 PCM dump module consumed by an Android HAL; the historical design notes live in `docs/`.
-- Every change lands through a pull request. `main` is protected: three required status checks (`PC build, test and coverage`, `MinGW cross compile check`, `Windows native full suite`), no force pushes, no deletions, and admins are not exempt. Expect a direct push to be rejected.
-- All three checks are real gates. A red `MinGW cross compile check` is a portability regression, not noise; a red `Windows native full suite` means one of the suite's cases broke on the Windows runtime, and its log names the case.
+- Every change lands through a pull request. `main` is protected: four required status checks (`PC build, test and coverage`, `MinGW cross compile check`, `Windows native full suite`, `Sanitizers (ASan + UBSan)`), no force pushes, no deletions, and admins are not exempt. Expect a direct push to be rejected. The live list is `.required_status_checks.contexts` on `gh api repos/wt159/audio_dump/branches/main/protection`; when adding a job, update this line in the same PR that adds it.
+- All four checks are real gates. A red `MinGW cross compile check` is a portability regression, not noise; a red `Windows native full suite` means one of the suite's cases broke on the Windows runtime, and its log names the case; a red `Sanitizers (ASan + UBSan)` is a memory or undefined-behaviour defect the plain suite did not catch, not a flaky extra.
 - There is no local C toolchain for the POSIX build on the maintainer workstation; CI is the compiler of record for `make`. The Windows suite can be run locally (see `docs/windows-full-suite.md`).
